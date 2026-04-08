@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reading Difficulty Transformer</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Reading Difficulty Transformer</h1>
+            <p class="subtitle">Analyze and transform text complexity — locally and privately</p>
+            <div id="ollama-status" class="status-badge status-checking">Checking Ollama...</div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="analyze">Analyze Text</button>
+            <button class="tab-btn" data-tab="transform">Transform Text</button>
+        </nav>
+
+        <!-- Analyze Tab -->
+        <section id="analyze-tab" class="tab-panel active">
+            <div class="input-area">
+                <textarea
+                    id="analyze-input"
+                    placeholder="Paste or type text here to analyze its reading difficulty... (minimum 10 words)"
+                    rows="8"
+                ></textarea>
+                <div class="input-actions">
+                    <span id="word-count" class="word-count">0 words</span>
+                    <button id="analyze-btn" class="btn btn-primary" disabled>Analyze</button>
+                </div>
+            </div>
+
+            <div id="results" class="results hidden">
+                <!-- Difficulty Badge -->
+                <div id="difficulty-card" class="card difficulty-card">
+                    <div class="difficulty-header">
+                        <div>
+                            <h2 id="difficulty-level">—</h2>
+                            <p id="difficulty-grade" class="grade-range"></p>
+                        </div>
+                        <div id="confidence-ring" class="confidence-ring">
+                            <span id="confidence-value">0%</span>
+                        </div>
+                    </div>
+                    <p id="difficulty-desc" class="difficulty-desc"></p>
+                </div>
+
+                <!-- Scores Grid -->
+                <div class="card">
+                    <h3>Readability Scores</h3>
+                    <div id="scores-grid" class="scores-grid"></div>
+                </div>
+
+                <!-- Statistics -->
+                <div class="card">
+                    <h3>Text Statistics</h3>
+                    <div id="stats-grid" class="stats-grid"></div>
+                </div>
+
+                <!-- AI Analysis -->
+                <div id="ai-card" class="card hidden">
+                    <h3>AI Analysis</h3>
+                    <p id="ai-analysis" class="ai-text"></p>
+                </div>
+
+                <!-- Suggestions -->
+                <div class="card">
+                    <h3>Suggestions</h3>
+                    <ul id="suggestions-list" class="suggestions-list"></ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- Transform Tab -->
+        <section id="transform-tab" class="tab-panel">
+            <div class="input-area">
+                <textarea
+                    id="transform-input"
+                    placeholder="Paste text you want to simplify or adjust to a different reading level..."
+                    rows="8"
+                ></textarea>
+                <div class="transform-controls">
+                    <div class="select-group">
+                        <label for="target-level">Target Level:</label>
+                        <select id="target-level">
+                            <option value="elementary">Elementary (Grades K-5)</option>
+                            <option value="middle_school">Middle School (Grades 6-8)</option>
+                            <option value="high_school" selected>High School (Grades 9-12)</option>
+                            <option value="college">College</option>
+                        </select>
+                    </div>
+                    <button id="transform-btn" class="btn btn-primary">Transform</button>
+                </div>
+            </div>
+
+            <div id="transform-results" class="results hidden">
+                <div class="card">
+                    <div class="transform-header">
+                        <div class="level-badge">
+                            <span class="label">Original</span>
+                            <span id="original-level" class="level">—</span>
+                            <span id="original-grade" class="grade">Grade —</span>
+                        </div>
+                        <div class="arrow">&#10132;</div>
+                        <div class="level-badge target">
+                            <span class="label">Transformed</span>
+                            <span id="new-level" class="level">—</span>
+                            <span id="new-grade" class="grade">Grade —</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3>Transformed Text</h3>
+                    <div id="transformed-text" class="transformed-text"></div>
+                    <button id="copy-btn" class="btn btn-secondary">Copy to Clipboard</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Loading Overlay -->
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p id="loading-text">Analyzing...</p>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
