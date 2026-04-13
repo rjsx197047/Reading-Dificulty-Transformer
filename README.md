@@ -1,40 +1,53 @@
 # Reading Difficulty Transformer
 
-A local-first web application that **analyzes** and **transforms** text reading difficulty using traditional readability formulas and AI-powered analysis via [Ollama](https://ollama.com).
+A local-first classroom accessibility engine that **analyzes**, **simplifies**, and **differentiates** text for students, teachers, ESL learners, and readers with dyslexia — powered by [Ollama](https://ollama.com) and traditional readability formulas.
 
 > **100% local & private** — your text never leaves your machine.
 
 ---
 
-## Demo
+## What It Does
 
-| Analyze | Transform |
-|---------|-----------|
-| Paste text and get instant readability scores, difficulty classification, AI analysis, and improvement suggestions. | Rewrite any text to a target reading level (elementary through college) using a local LLM. |
+| Mode | Who it's for | What it returns |
+|------|-------------|-----------------|
+| **Analyze** | Anyone | 7 readability scores, difficulty level, AI analysis, suggestions |
+| **Simplify** | Teachers, students, ESL learners | Grade-targeted rewrite with keyword locking, dyslexia support, meaning score |
+| **Worksheet** | Teachers | 3 differentiated versions (Advanced / Standard / Simplified) in one click |
+| **Transform** | General use | Quick rewrite to a named level (Elementary → College) |
 
 ---
 
 ## Features
 
 ### Analyze Mode
-- **7 readability formulas** computed simultaneously:
-  - Flesch Reading Ease
-  - Flesch-Kincaid Grade Level
-  - Gunning Fog Index
-  - SMOG Index
-  - Coleman-Liau Index
-  - Automated Readability Index (ARI)
-  - Dale-Chall Readability Score
-- **Difficulty classification** — Elementary, Middle School, High School, College, or Graduate
-- **Text statistics** — word count, sentence count, syllable analysis, complex word percentage
-- **AI-powered qualitative analysis** via Ollama (gracefully degrades to formula-only if Ollama is offline)
+- **7 readability formulas** — Flesch Reading Ease, Flesch-Kincaid, Gunning Fog, SMOG, Coleman-Liau, ARI, Dale-Chall
+- **Composite grade level** — weighted consensus across all formulas
+- **Difficulty classification** — Elementary, Middle School, High School, College, Graduate
+- **Text statistics** — word count, sentence count, syllable analysis, complex word %
+- **AI qualitative analysis** via Ollama (graceful fallback to formula-only if offline)
 - **Actionable suggestions** to simplify text
 
+### Simplify Mode (Grade-Level Slider)
+- **Numeric grade target** — slide from Grade 1 to Grade 16
+- **Vocabulary pre-processing** — 60+ word replacements (*utilize → use*, *approximately → about*, etc.) applied before LLM rewriting
+- **Keyword preservation** — NLTK extracts key nouns and STEM terms; LLM is instructed to leave them unchanged
+- **Dyslexia Support Mode** (`chunking`) — long sentences are split at natural clause boundaries
+- **Dyslexia Formatting** — short paragraphs, each sentence on its own line
+- **ESL Mode** — simplified grammar, SVO structure, no idioms
+- **Instruction Mode** — converts homework instructions into numbered action steps
+- **Automatic verification loop** — checks achieved grade level; retries up to 3× if outside ±0.5 grade tolerance
+- **Semantic similarity score** — cosine similarity between original and simplified text (requires `sentence-transformers`)
+- **Structured JSON output** — `original_level`, `target_level`, `final_level`, `meaning_score`, `simplified_text`
+
+### Worksheet Generator
+- Paste any text; receive **three differentiated versions** in one request
+- Advanced (Grade 10-12), Standard (Grade 6-8), Simplified (Grade 3-5)
+- Each version scored for achieved grade level
+- One-click copy per version
+
 ### Transform Mode
-- **Rewrite text** to a target reading level using a local LLM
-- **Target levels:** Elementary (K-5), Middle School (6-8), High School (9-12), College
-- **Before/after comparison** — see grade-level change after transformation
-- **Copy to clipboard** — one-click copy of transformed text
+- Quick named-level rewriting: Elementary, Middle School, High School, College
+- Before/after grade comparison
 
 ---
 
@@ -45,8 +58,10 @@ A local-first web application that **analyzes** and **transforms** text reading 
 | **Backend** | Python 3.10+, FastAPI, Uvicorn |
 | **NLP** | textstat, NLTK |
 | **AI** | Ollama (local LLM — llama3.2 default) |
+| **Semantic Scoring** | sentence-transformers `all-MiniLM-L6-v2` (optional) |
 | **Frontend** | Vanilla HTML/CSS/JS (Jinja2 templates) |
 | **Config** | Pydantic Settings, `.env` files |
+| **Agent Interface** | `ReadingDifficultyAgent` — Forge AI / multi-agent compatible |
 
 ---
 
@@ -73,7 +88,12 @@ pip install -r requirements.txt
 ### 3. Download NLTK Data
 
 ```bash
-python3 -c "import nltk; nltk.download('cmudict'); nltk.download('punkt'); nltk.download('punkt_tab')"
+python3 -c "
+import nltk
+nltk.download('averaged_perceptron_tagger_eng')
+nltk.download('punkt_tab')
+nltk.download('stopwords')
+"
 ```
 
 ### 4. Pull an Ollama Model
@@ -82,7 +102,7 @@ python3 -c "import nltk; nltk.download('cmudict'); nltk.download('punkt'); nltk.
 ollama pull llama3.2
 ```
 
-### 5. Start Ollama (if not already running)
+### 5. Start Ollama
 
 ```bash
 ollama serve
@@ -98,20 +118,28 @@ Open **http://localhost:8000** in your browser.
 
 ---
 
-## Configuration
+## Optional: Semantic Similarity Scoring
 
-Create a `.env` file from the template:
+Install `sentence-transformers` to enable the meaning preservation score in Simplify mode:
+
+```bash
+pip install sentence-transformers
+```
+
+The model (`all-MiniLM-L6-v2`, ~80MB) downloads automatically on first use and runs fully locally.
+
+---
+
+## Configuration
 
 ```bash
 cp .env.example .env
 ```
 
-Available settings:
-
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2` | Model for AI analysis & transforms |
+| `OLLAMA_MODEL` | `llama3.2` | Model for all AI tasks |
 | `HOST` | `0.0.0.0` | Server bind address |
 | `PORT` | `8000` | Server port |
 | `DEBUG` | `true` | Enable hot-reload |
@@ -122,73 +150,111 @@ Available settings:
 
 ### `GET /api/health`
 
-Health check. Returns server status and Ollama availability.
-
 ```json
 {
   "status": "healthy",
   "version": "0.1.0",
-  "ollama_available": true
+  "ollama_available": true,
+  "semantic_scoring_available": false
 }
 ```
+
+---
 
 ### `POST /api/analyze`
 
-Analyze reading difficulty of text.
+**Request:**
+```json
+{ "text": "Your text here (minimum 10 words)..." }
+```
+
+**Response:**
+```json
+{
+  "difficulty": { "level": "High School", "grade_range": "9-12", "confidence": 0.85, "description": "..." },
+  "scores": { "flesch_reading_ease": 52.3, "flesch_kincaid_grade": 10.2, ... },
+  "statistics": { "word_count": 150, "sentence_count": 8, ... },
+  "ai_analysis": "The text demonstrates moderate complexity...",
+  "suggestions": ["Shorten sentences...", "Use simpler vocabulary..."]
+}
+```
+
+---
+
+### `POST /api/simplify`
 
 **Request:**
 ```json
 {
-  "text": "Your text here (minimum 10 words)..."
+  "input_text": "The mitochondria produces ATP through cellular respiration...",
+  "target_grade": 5.0,
+  "chunking": true,
+  "preserve_keywords": true,
+  "mode": "standard",
+  "instruction_mode": false,
+  "dyslexia_mode": false
 }
 ```
 
 **Response:**
 ```json
 {
-  "difficulty": {
-    "level": "High School",
-    "grade_range": "9-12",
-    "confidence": 0.85,
-    "description": "Standard high school level content."
-  },
-  "scores": {
-    "flesch_reading_ease": 52.3,
-    "flesch_kincaid_grade": 10.2,
-    "gunning_fog": 12.8,
-    "smog_index": 11.5,
-    "coleman_liau": 10.1,
-    "ari": 11.3,
-    "dale_chall": 8.2
-  },
-  "statistics": {
-    "word_count": 150,
-    "sentence_count": 8,
-    "avg_words_per_sentence": 18.75,
-    "complex_word_percentage": 12.5
-  },
-  "ai_analysis": "The text demonstrates moderate complexity...",
-  "suggestions": ["Use simpler vocabulary...", "Shorten sentences..."]
+  "original_level": 9.2,
+  "target_level": 5.0,
+  "final_level": 5.4,
+  "meaning_score": 0.91,
+  "simplified_text": "The mitochondria helps the cell make energy.\n\nThis process is called cellular respiration.",
+  "keywords_preserved": ["mitochondria", "respiration", "atp"]
 }
 ```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `input_text` | string | required | Text to simplify |
+| `target_grade` | float 1–16 | required | Target grade level |
+| `chunking` | bool | false | Dyslexia Support: split sentences into short chunks |
+| `preserve_keywords` | bool | false | Lock key nouns and STEM terms |
+| `mode` | string | `"standard"` | `"standard"` or `"esl"` |
+| `instruction_mode` | bool | false | Convert instructions to numbered steps |
+| `dyslexia_mode` | bool | false | Short paragraphs, each sentence on its own line |
+
+---
+
+### `POST /api/worksheet_versions`
+
+**Request:**
+```json
+{ "worksheet_text": "Read the passage and answer the following questions..." }
+```
+
+**Response:**
+```json
+{
+  "advanced_version": "...",
+  "standard_version": "...",
+  "simplified_version": "...",
+  "advanced_grade": 11.2,
+  "standard_grade": 7.1,
+  "simplified_grade": 4.3
+}
+```
+
+---
 
 ### `POST /api/transform`
 
-Transform text to a target reading level (requires Ollama).
-
 **Request:**
 ```json
-{
-  "text": "Complex academic text...",
-  "target_level": "middle_school"
-}
+{ "text": "Complex academic text...", "target_level": "middle_school" }
 ```
 
 **Response:**
 ```json
 {
-  "original_text": "Complex academic text...",
-  "transformed_text": "Simpler version of the text...",
+  "original_text": "...",
+  "transformed_text": "...",
   "original_level": "College",
   "target_level": "middle_school",
   "original_grade": 14.2,
@@ -198,62 +264,118 @@ Transform text to a target reading level (requires Ollama).
 
 ---
 
+## Forge AI / Multi-Agent Integration
+
+The `ReadingDifficultyAgent` class wraps the API for use in orchestration pipelines:
+
+```python
+from app.services.forge_agent import ReadingDifficultyAgent
+
+agent = ReadingDifficultyAgent(api_base="http://localhost:8000/api")
+
+# Detect reading level
+result = await agent.detect_level("Your text here...")
+
+# Simplify to Grade 5
+result = await agent.simplify_text(
+    input_text="...",
+    target_grade=5.0,
+    preserve_keywords=True,
+    mode="esl",
+)
+
+# Generate worksheet versions
+result = await agent.generate_versions("Worksheet text here...")
+```
+
+All methods are async and return structured dicts matching the API response schemas.
+
+---
+
 ## Project Structure
 
 ```
 Reading-Dificulty-Transformer/
 ├── app/
 │   ├── api/
-│   │   └── routes.py             # API endpoints (analyze, transform, health)
+│   │   └── routes.py             # All endpoints: analyze, simplify, worksheet_versions, transform, health
 │   ├── core/
 │   │   └── config.py             # Pydantic settings (env vars)
 │   ├── models/
 │   │   └── schemas.py            # Request/response Pydantic models
 │   ├── services/
-│   │   ├── readability.py        # Core reading-level detector module
-│   │   └── ollama_client.py      # Ollama integration (AI analysis & transform)
-│   ├── utils/
+│   │   ├── readability.py        # Readability formulas + composite grade scoring
+│   │   ├── ollama_client.py      # Ollama integration (analysis, simplify, worksheet)
+│   │   ├── simplifier.py         # Vocab replacement, keyword extraction, chunking, prompt builder
+│   │   ├── semantic.py           # Cosine similarity scoring (sentence-transformers, optional)
+│   │   └── forge_agent.py        # ReadingDifficultyAgent — Forge AI / multi-agent wrapper
 │   └── main.py                   # FastAPI app entry point
 ├── static/
-│   ├── css/
-│   │   └── style.css             # Dark-theme UI styles
-│   └── js/
-│       └── app.js                # Frontend logic (tabs, API calls, rendering)
+│   ├── css/style.css             # Dark-theme UI styles
+│   └── js/app.js                 # Frontend logic (4 tabs, API calls, rendering)
 ├── templates/
-│   └── index.html                # Main page (Jinja2 template)
+│   └── index.html                # Main page (4 tabs: Analyze, Simplify, Worksheet, Transform)
 ├── tests/
 │   └── test_readability.py       # Readability module tests
-├── .env.example                  # Environment variable template
-├── .gitignore
-├── pyproject.toml                # Project metadata & tool config
-├── requirements.txt              # Python dependencies
-├── run.py                        # Dev server launcher
+├── .env.example
+├── pyproject.toml
+├── requirements.txt
+├── run.py
 └── README.md
 ```
 
 ---
 
-## How It Works
+## How the Simplify Pipeline Works
 
-### Reading-Level Detection Pipeline
+```
+INPUT TEXT
+    │
+    ▼
+① Detect original grade level (composite weighted average of 5 formulas)
+    │
+    ▼
+② Apply vocabulary pre-processing (60+ word replacements, STEM terms protected)
+    │
+    ▼
+③ Extract keywords via NLTK POS tagging (if preserve_keywords=True)
+    │
+    ▼
+④ Build LLM prompt with grade target + active flags (chunking, ESL, instruction mode...)
+    │
+    ▼
+⑤ Send to Ollama → rewritten text
+    │
+    ▼
+⑥ Verify achieved grade level
+    ├─ Within ±0.5 of target → done
+    └─ Outside tolerance → retry (max 3 attempts)
+    │
+    ▼
+⑦ Apply post-processing (chunking splits, dyslexia formatting)
+    │
+    ▼
+⑧ Compute semantic similarity score (if sentence-transformers installed)
+    │
+    ▼
+⑨ Return structured JSON
+```
 
-1. **Text Statistics** — Extract raw metrics (word count, sentence count, syllable count, complex word ratio)
-2. **Readability Formulas** — Compute 7 standard readability scores using `textstat`
-3. **Weighted Classification** — Combine grade-level scores into a composite grade using weighted averaging:
-   - Flesch-Kincaid Grade (weight: 2.0)
-   - Gunning Fog (weight: 1.5)
-   - SMOG Index (weight: 1.5)
-   - Coleman-Liau (weight: 1.0)
-   - ARI (weight: 1.0)
-4. **Difficulty Mapping** — Map composite grade to level (Elementary → Graduate) with confidence score
-5. **AI Analysis** *(optional)* — Query Ollama for qualitative assessment of vocabulary, structure, and conceptual density
-6. **Suggestions** — Generate actionable improvements based on score thresholds
+---
 
-### Text Transformation
+## Graceful Degradation
 
-1. **Original Analysis** — Compute baseline grade level
-2. **LLM Rewrite** — Prompt Ollama to rewrite text for the target audience while preserving all factual content
-3. **Post-Analysis** — Compute the new grade level to verify improvement
+| Feature | Ollama Online | Ollama Offline | sentence-transformers missing |
+|---------|:---:|:---:|:---:|
+| Readability scores | ✅ | ✅ | ✅ |
+| Text statistics | ✅ | ✅ | ✅ |
+| Difficulty classification | ✅ | ✅ | ✅ |
+| Suggestions | ✅ | ✅ | ✅ |
+| AI qualitative analysis | ✅ | ❌ skipped | ✅ |
+| Text transformation | ✅ | ❌ error | ✅ |
+| Simplify pipeline | ✅ | ❌ error | ✅ |
+| Semantic similarity score | ✅ | ✅ | ❌ null |
+| Worksheet generator | ✅ | ❌ error | ✅ |
 
 ---
 
@@ -266,29 +388,24 @@ python3 -m pytest tests/ -v
 
 ---
 
-## Graceful Degradation
+## Target Users
 
-The app works **with or without Ollama**:
-
-| Feature | Ollama Online | Ollama Offline |
-|---------|:---:|:---:|
-| Readability scores | ✅ | ✅ |
-| Text statistics | ✅ | ✅ |
-| Difficulty classification | ✅ | ✅ |
-| Suggestions | ✅ | ✅ |
-| AI qualitative analysis | ✅ | ❌ (skipped) |
-| Text transformation | ✅ | ❌ (returns error) |
+- **Middle school students** — grade-level text simplification
+- **ESL learners** — simplified grammar, reduced clause nesting
+- **Students with dyslexia** — chunked sentences, short paragraphs, extra spacing
+- **Teachers** — differentiated worksheets in one click, keyword preservation for STEM vocab
+- **Public library homework help desks** — lightweight single-input interface
 
 ---
 
 ## Roadmap
 
-- [ ] PDF/DOCX file upload support
+- [ ] PDF / DOCX file upload support
 - [ ] Batch analysis (multiple texts)
+- [ ] Side-by-side diff view (original vs. simplified)
 - [ ] Reading level history & trends
-- [ ] Custom vocabulary lists for domain-specific analysis
-- [ ] Side-by-side original vs. transformed diff view
 - [ ] Export reports (PDF)
+- [ ] Analytics dashboard (documents simplified, avg grade reduction)
 - [ ] Multi-language support
 - [ ] Browser extension
 
@@ -299,8 +416,7 @@ The app works **with or without Ollama**:
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Run tests: `python3 -m pytest tests/ -v`
-4. Commit changes: `git commit -m "Add my feature"`
-5. Push and open a pull request
+4. Commit and open a pull request
 
 ---
 
@@ -316,3 +432,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 - [Ollama](https://ollama.com) — Local LLM inference
 - [FastAPI](https://fastapi.tiangolo.com) — High-performance Python API framework
 - [NLTK](https://www.nltk.org) — Natural language processing toolkit
+- [sentence-transformers](https://www.sbert.net) — Semantic similarity scoring

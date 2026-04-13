@@ -7,3 +7,5 @@ textstat>=0.7.3
 nltk>=3.8.1
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
+# Optional: semantic similarity scoring (install separately if needed)
+# sentence-transformers>=2.7.0

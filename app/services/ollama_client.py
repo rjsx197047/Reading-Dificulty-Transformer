@@ -76,6 +76,86 @@ Rewritten text:"""
     return await _query_ollama(prompt)
 
 
+async def simplify_text(prompt: str) -> str | None:
+    """
+    Send a fully-built simplification prompt to Ollama and return the response.
+    The caller (routes.py) is responsible for constructing the prompt via
+    app.services.simplifier.build_simplify_prompt().
+    Returns None if Ollama is unavailable.
+    """
+    return await _query_ollama(prompt)
+
+
+async def generate_worksheet_versions(text: str) -> dict[str, str] | None:
+    """
+    Ask Ollama to produce three differentiated versions of the given worksheet text:
+    advanced (Grade 10+), standard (Grade 6-8), and simplified (Grade 3-5).
+    Returns a dict with keys 'advanced', 'standard', 'simplified', or None on failure.
+    """
+    prompt = f"""You are an experienced curriculum designer creating differentiated materials.
+
+Rewrite the following text into THREE versions at different reading levels.
+
+Rules for each version:
+- ADVANCED (Grade 10-12): Rich vocabulary, complex sentences, full academic register.
+- STANDARD (Grade 6-8): Clear language, moderate sentence length, common vocabulary.
+- SIMPLIFIED (Grade 3-5): Very simple words, short sentences (under 15 words), concrete ideas.
+
+All versions must preserve the same factual content and meaning.
+
+Original text:
+---
+{text[:3000]}
+---
+
+Respond in EXACTLY this format with no extra text:
+ADVANCED:
+<advanced version here>
+
+STANDARD:
+<standard version here>
+
+SIMPLIFIED:
+<simplified version here>"""
+
+    response = await _query_ollama(prompt)
+    if not response:
+        return None
+
+    result: dict[str, str] = {}
+    current_key: str | None = None
+    current_lines: list[str] = []
+
+    for line in response.splitlines():
+        upper = line.strip().upper()
+        if upper.startswith("ADVANCED:"):
+            if current_key:
+                result[current_key] = "\n".join(current_lines).strip()
+            current_key = "advanced"
+            current_lines = [line[line.upper().find("ADVANCED:") + 9:].strip()]
+        elif upper.startswith("STANDARD:"):
+            if current_key:
+                result[current_key] = "\n".join(current_lines).strip()
+            current_key = "standard"
+            current_lines = [line[line.upper().find("STANDARD:") + 9:].strip()]
+        elif upper.startswith("SIMPLIFIED:"):
+            if current_key:
+                result[current_key] = "\n".join(current_lines).strip()
+            current_key = "simplified"
+            current_lines = [line[line.upper().find("SIMPLIFIED:") + 11:].strip()]
+        elif current_key is not None:
+            current_lines.append(line)
+
+    if current_key:
+        result[current_key] = "\n".join(current_lines).strip()
+
+    # Ensure all three keys are present
+    if not all(k in result and result[k] for k in ("advanced", "standard", "simplified")):
+        return None
+
+    return result
+
+
 async def _query_ollama(prompt: str) -> str | None:
     """Send a prompt to Ollama and return the response text, or None on failure."""
     try:

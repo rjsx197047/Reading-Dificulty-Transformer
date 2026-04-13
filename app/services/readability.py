@@ -153,6 +153,23 @@ def generate_suggestions(scores: ReadabilityScores, stats: TextStatistics) -> li
     return suggestions
 
 
+def get_composite_grade(scores: ReadabilityScores) -> float:
+    """
+    Return the same weighted-average composite grade used by classify_difficulty().
+    Useful when a raw numeric grade level is needed without full classification.
+    """
+    grade_scores = [
+        (scores.flesch_kincaid_grade, 2.0),
+        (scores.gunning_fog, 1.5),
+        (scores.smog_index, 1.5),
+        (scores.coleman_liau, 1.0),
+        (scores.ari, 1.0),
+    ]
+    total_weight = sum(w for _, w in grade_scores)
+    composite = sum(s * w for s, w in grade_scores) / total_weight
+    return round(max(composite, 0.0), 2)
+
+
 def analyze_text(text: str) -> tuple[DifficultyLevel, ReadabilityScores, TextStatistics, list[str]]:
     """
     Full pipeline: compute scores, classify difficulty, and generate suggestions.

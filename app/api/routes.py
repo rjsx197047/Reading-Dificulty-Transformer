@@ -6,14 +6,42 @@ from app.core.config import settings
 from app.models.schemas import (
     AnalysisResult,
     HealthResponse,
+    SimplifyRequest,
+    SimplifyResult,
     TextInput,
     TransformRequest,
     TransformResult,
+    WorksheetRequest,
+    WorksheetResult,
 )
-from app.services.ollama_client import get_ai_analysis, is_ollama_available, transform_text
-from app.services.readability import analyze_text, compute_readability_scores
+from app.services import semantic as semantic_svc
+from app.services.ollama_client import (
+    generate_worksheet_versions,
+    get_ai_analysis,
+    is_ollama_available,
+    simplify_text,
+    transform_text,
+)
+from app.services.readability import (
+    analyze_text,
+    classify_difficulty,
+    compute_readability_scores,
+    get_composite_grade,
+)
+from app.services.simplifier import (
+    apply_chunking,
+    apply_dyslexia_formatting,
+    apply_vocab_replacements,
+    build_simplify_prompt,
+    extract_keywords,
+)
 
 router = APIRouter()
+
+# Tolerance for the readability verification loop (±grade levels)
+_GRADE_TOLERANCE = 0.5
+# Maximum rewrite attempts in the verification loop
+_MAX_RETRIES = 3
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -24,6 +52,7 @@ async def health_check():
         status="healthy",
         version=settings.app_version,
         ollama_available=ollama_ok,
+        semantic_scoring_available=semantic_svc.is_available(),
     )
 
 
@@ -44,7 +73,6 @@ async def analyze(input_data: TextInput):
 
     difficulty, scores, stats, suggestions = analyze_text(text)
 
-    # Try AI analysis (non-blocking; returns None if Ollama is down)
     scores_summary = (
         f"Flesch Reading Ease: {scores.flesch_reading_ease}, "
         f"Flesch-Kincaid Grade: {scores.flesch_kincaid_grade}, "
@@ -67,7 +95,7 @@ async def transform(request: TransformRequest):
     """
     Transform text to a target reading level using Ollama.
 
-    Requires Ollama to be running. Falls back to an error if unavailable.
+    Requires Ollama to be running.
     """
     text = request.text.strip()
     target = request.target_level.lower()
@@ -85,22 +113,15 @@ async def transform(request: TransformRequest):
             detail="Ollama is not available. Please start Ollama to use the transform feature.",
         )
 
-    # Get original grade
     original_scores = compute_readability_scores(text)
     original_grade = original_scores.flesch_kincaid_grade
 
-    # Transform
     transformed = await transform_text(text, target)
     if not transformed:
         raise HTTPException(status_code=500, detail="Failed to transform text via Ollama.")
 
-    # Get new grade
     new_scores = compute_readability_scores(transformed)
     new_grade = new_scores.flesch_kincaid_grade
-
-    # Classify original level
-    from app.services.readability import classify_difficulty
-
     original_level = classify_difficulty(original_scores).level
 
     return TransformResult(
@@ -110,4 +131,145 @@ async def transform(request: TransformRequest):
         target_level=target,
         original_grade=round(original_grade, 2),
         new_grade=round(new_grade, 2),
+    )
+
+
+@router.post("/simplify", response_model=SimplifyResult)
+async def simplify(request: SimplifyRequest):
+    """
+    Full simplification pipeline with grade-level targeting.
+
+    Pipeline steps:
+    1. Detect original reading level (composite grade).
+    2. Apply vocabulary pre-processing (replacement dictionary).
+    3. Extract and lock keywords if preserve_keywords=True.
+    4. Send to Ollama with a grade-targeted prompt.
+    5. Verify achieved grade level; retry up to 3 times if outside ±0.5 tolerance.
+    6. Apply chunking / dyslexia formatting if requested.
+    7. Compute semantic similarity score if sentence-transformers is available.
+    8. Return structured JSON result.
+    """
+    text = request.input_text.strip()
+    if len(text.split()) < 5:
+        raise HTTPException(
+            status_code=422,
+            detail="input_text must contain at least 5 words.",
+        )
+
+    valid_modes = ("standard", "esl")
+    if request.mode not in valid_modes:
+        raise HTTPException(
+            status_code=422,
+            detail=f"mode must be one of: {', '.join(valid_modes)}",
+        )
+
+    if not await is_ollama_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Ollama is not available. Please start Ollama to use /simplify.",
+        )
+
+    # Step 1: detect original level
+    original_scores = compute_readability_scores(text)
+    original_level = get_composite_grade(original_scores)
+
+    # Step 2: vocabulary pre-processing
+    preprocessed = apply_vocab_replacements(text)
+
+    # Step 3: keyword extraction
+    keywords: list[str] = []
+    if request.preserve_keywords:
+        keywords = extract_keywords(text)
+
+    # Steps 4 + 5: rewrite with verification loop
+    current_text = preprocessed
+    final_text = preprocessed
+    final_grade = original_level
+
+    for attempt in range(_MAX_RETRIES):
+        prompt = build_simplify_prompt(
+            text=current_text,
+            target_grade=request.target_grade,
+            keywords=keywords,
+            preserve_keywords=request.preserve_keywords,
+            mode=request.mode,
+            instruction_mode=request.instruction_mode,
+            chunking=request.chunking and attempt == 0,  # only inject chunking rule once
+        )
+
+        rewritten = await simplify_text(prompt)
+        if not rewritten:
+            raise HTTPException(status_code=500, detail="Ollama failed to return a response.")
+
+        rewritten_scores = compute_readability_scores(rewritten)
+        achieved_grade = get_composite_grade(rewritten_scores)
+
+        final_text = rewritten
+        final_grade = achieved_grade
+
+        if abs(achieved_grade - request.target_grade) <= _GRADE_TOLERANCE:
+            break  # Within tolerance — done
+
+        # Feed the rewritten text back for another pass
+        current_text = rewritten
+
+    # Step 6: post-processing formatting
+    if request.chunking:
+        final_text = apply_chunking(final_text)
+    if request.dyslexia_mode:
+        final_text = apply_dyslexia_formatting(final_text)
+
+    # Step 7: semantic similarity
+    meaning_score = semantic_svc.compute_similarity(text, final_text)
+
+    return SimplifyResult(
+        original_level=original_level,
+        target_level=request.target_grade,
+        final_level=final_grade,
+        meaning_score=meaning_score,
+        simplified_text=final_text,
+        keywords_preserved=keywords if request.preserve_keywords else [],
+    )
+
+
+@router.post("/worksheet_versions", response_model=WorksheetResult)
+async def worksheet_versions(request: WorksheetRequest):
+    """
+    Generate three differentiated versions of a worksheet:
+    - Advanced (Grade 10-12)
+    - Standard (Grade 6-8)
+    - Simplified (Grade 3-5)
+
+    Requires Ollama.
+    """
+    text = request.worksheet_text.strip()
+    if len(text.split()) < 5:
+        raise HTTPException(
+            status_code=422,
+            detail="worksheet_text must contain at least 5 words.",
+        )
+
+    if not await is_ollama_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Ollama is not available. Please start Ollama to use /worksheet_versions.",
+        )
+
+    versions = await generate_worksheet_versions(text)
+    if not versions:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate worksheet versions via Ollama.",
+        )
+
+    def _grade(t: str) -> float:
+        return get_composite_grade(compute_readability_scores(t))
+
+    return WorksheetResult(
+        advanced_version=versions["advanced"],
+        standard_version=versions["standard"],
+        simplified_version=versions["simplified"],
+        advanced_grade=_grade(versions["advanced"]),
+        standard_grade=_grade(versions["standard"]),
+        simplified_grade=_grade(versions["simplified"]),
     )

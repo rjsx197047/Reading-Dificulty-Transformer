@@ -11,16 +11,21 @@
         <header>
             <h1>Reading Difficulty Transformer</h1>
             <p class="subtitle">Analyze and transform text complexity — locally and privately</p>
-            <div id="ollama-status" class="status-badge status-checking">Checking Ollama...</div>
+            <div class="status-badges">
+                <div id="ollama-status" class="status-badge status-checking">Checking Ollama...</div>
+                <div id="semantic-status" class="status-badge status-checking">Checking Semantic...</div>
+            </div>
         </header>
 
         <!-- Tab Navigation -->
         <nav class="tabs">
-            <button class="tab-btn active" data-tab="analyze">Analyze Text</button>
-            <button class="tab-btn" data-tab="transform">Transform Text</button>
+            <button class="tab-btn active" data-tab="analyze">Analyze</button>
+            <button class="tab-btn" data-tab="simplify">Simplify</button>
+            <button class="tab-btn" data-tab="worksheet">Worksheet</button>
+            <button class="tab-btn" data-tab="transform">Transform</button>
         </nav>
 
-        <!-- Analyze Tab -->
+        <!-- ===== Analyze Tab ===== -->
         <section id="analyze-tab" class="tab-panel active">
             <div class="input-area">
                 <textarea
@@ -35,7 +40,6 @@
             </div>
 
             <div id="results" class="results hidden">
-                <!-- Difficulty Badge -->
                 <div id="difficulty-card" class="card difficulty-card">
                     <div class="difficulty-header">
                         <div>
@@ -49,25 +53,21 @@
                     <p id="difficulty-desc" class="difficulty-desc"></p>
                 </div>
 
-                <!-- Scores Grid -->
                 <div class="card">
                     <h3>Readability Scores</h3>
                     <div id="scores-grid" class="scores-grid"></div>
                 </div>
 
-                <!-- Statistics -->
                 <div class="card">
                     <h3>Text Statistics</h3>
                     <div id="stats-grid" class="stats-grid"></div>
                 </div>
 
-                <!-- AI Analysis -->
                 <div id="ai-card" class="card hidden">
                     <h3>AI Analysis</h3>
                     <p id="ai-analysis" class="ai-text"></p>
                 </div>
 
-                <!-- Suggestions -->
                 <div class="card">
                     <h3>Suggestions</h3>
                     <ul id="suggestions-list" class="suggestions-list"></ul>
@@ -75,7 +75,190 @@
             </div>
         </section>
 
-        <!-- Transform Tab -->
+        <!-- ===== Simplify Tab ===== -->
+        <section id="simplify-tab" class="tab-panel">
+            <div class="input-area">
+                <textarea
+                    id="simplify-input"
+                    placeholder="Paste text to simplify to a target grade level..."
+                    rows="8"
+                ></textarea>
+
+                <!-- Grade Slider -->
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label for="grade-slider">Target Grade Level</label>
+                        <span id="grade-display" class="grade-pill">Grade 6</span>
+                    </div>
+                    <input type="range" id="grade-slider" min="1" max="16" step="0.5" value="6" class="grade-slider">
+                    <div class="slider-labels">
+                        <span>Grade 1</span>
+                        <span>Elementary</span>
+                        <span>Middle</span>
+                        <span>High School</span>
+                        <span>College</span>
+                    </div>
+                </div>
+
+                <!-- Options Grid -->
+                <div class="options-grid">
+                    <div class="option-group">
+                        <label class="option-label">Mode</label>
+                        <select id="simplify-mode" class="option-select">
+                            <option value="standard">Standard</option>
+                            <option value="esl">ESL (non-native speakers)</option>
+                        </select>
+                    </div>
+
+                    <div class="option-group">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="opt-chunking" class="toggle-input">
+                            <span class="toggle-switch"></span>
+                            <span class="toggle-text">
+                                <strong>Dyslexia Support</strong>
+                                <small>Split long sentences into short chunks</small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="option-group">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="opt-keywords" class="toggle-input">
+                            <span class="toggle-switch"></span>
+                            <span class="toggle-text">
+                                <strong>Preserve Keywords</strong>
+                                <small>Lock STEM vocabulary during rewrite</small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="option-group">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="opt-instructions" class="toggle-input">
+                            <span class="toggle-switch"></span>
+                            <span class="toggle-text">
+                                <strong>Instruction Mode</strong>
+                                <small>Convert instructions into numbered steps</small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="option-group">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="opt-dyslexia" class="toggle-input">
+                            <span class="toggle-switch"></span>
+                            <span class="toggle-text">
+                                <strong>Dyslexia Formatting</strong>
+                                <small>Short paragraphs with extra spacing</small>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="input-actions">
+                    <span id="simplify-word-count" class="word-count">0 words</span>
+                    <button id="simplify-btn" class="btn btn-primary">Simplify</button>
+                </div>
+            </div>
+
+            <div id="simplify-results" class="results hidden">
+                <!-- Grade Level Comparison -->
+                <div class="card">
+                    <h3>Grade Level Journey</h3>
+                    <div class="grade-journey">
+                        <div class="journey-step">
+                            <span class="journey-label">Original</span>
+                            <span id="orig-grade-val" class="journey-grade grade-high">—</span>
+                        </div>
+                        <div class="journey-arrow">&#10132;</div>
+                        <div class="journey-step">
+                            <span class="journey-label">Target</span>
+                            <span id="target-grade-val" class="journey-grade grade-target">—</span>
+                        </div>
+                        <div class="journey-arrow">&#10132;</div>
+                        <div class="journey-step">
+                            <span class="journey-label">Achieved</span>
+                            <span id="final-grade-val" class="journey-grade grade-final">—</span>
+                        </div>
+                    </div>
+                    <div id="meaning-score-row" class="meaning-score-row hidden">
+                        <span class="meaning-label">Meaning Preserved</span>
+                        <div class="meaning-bar-wrap">
+                            <div id="meaning-bar" class="meaning-bar"></div>
+                        </div>
+                        <span id="meaning-value" class="meaning-value">—</span>
+                    </div>
+                </div>
+
+                <!-- Keywords Preserved -->
+                <div id="keywords-card" class="card hidden">
+                    <h3>Keywords Preserved</h3>
+                    <div id="keywords-list" class="keywords-list"></div>
+                </div>
+
+                <!-- Simplified Text -->
+                <div class="card">
+                    <h3>Simplified Text</h3>
+                    <div id="simplified-text" class="transformed-text"></div>
+                    <button id="copy-simplified-btn" class="btn btn-secondary">Copy to Clipboard</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== Worksheet Tab ===== -->
+        <section id="worksheet-tab" class="tab-panel">
+            <div class="input-area">
+                <p class="tab-description">
+                    Paste a worksheet or reading passage. The system generates three differentiated versions
+                    — Advanced, Standard, and Simplified — suitable for mixed-ability classrooms.
+                </p>
+                <textarea
+                    id="worksheet-input"
+                    placeholder="Paste your worksheet text here..."
+                    rows="8"
+                ></textarea>
+                <div class="input-actions">
+                    <span id="worksheet-word-count" class="word-count">0 words</span>
+                    <button id="worksheet-btn" class="btn btn-primary">Generate Versions</button>
+                </div>
+            </div>
+
+            <div id="worksheet-results" class="results hidden">
+                <div class="worksheet-grid">
+                    <!-- Advanced -->
+                    <div class="worksheet-card card worksheet-advanced">
+                        <div class="worksheet-card-header">
+                            <h3>Advanced</h3>
+                            <span id="adv-grade" class="grade-chip">Grade —</span>
+                        </div>
+                        <div id="adv-text" class="worksheet-text"></div>
+                        <button class="btn btn-secondary copy-worksheet-btn" data-target="adv-text">Copy</button>
+                    </div>
+
+                    <!-- Standard -->
+                    <div class="worksheet-card card worksheet-standard">
+                        <div class="worksheet-card-header">
+                            <h3>Standard</h3>
+                            <span id="std-grade" class="grade-chip">Grade —</span>
+                        </div>
+                        <div id="std-text" class="worksheet-text"></div>
+                        <button class="btn btn-secondary copy-worksheet-btn" data-target="std-text">Copy</button>
+                    </div>
+
+                    <!-- Simplified -->
+                    <div class="worksheet-card card worksheet-simplified">
+                        <div class="worksheet-card-header">
+                            <h3>Simplified</h3>
+                            <span id="sim-grade" class="grade-chip">Grade —</span>
+                        </div>
+                        <div id="sim-text" class="worksheet-text"></div>
+                        <button class="btn btn-secondary copy-worksheet-btn" data-target="sim-text">Copy</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== Transform Tab (legacy) ===== -->
         <section id="transform-tab" class="tab-panel">
             <div class="input-area">
                 <textarea
@@ -124,7 +307,7 @@
         <!-- Loading Overlay -->
         <div id="loading" class="loading hidden">
             <div class="spinner"></div>
-            <p id="loading-text">Analyzing...</p>
+            <p id="loading-text">Processing...</p>
         </div>
     </div>
 

@@ -78,9 +78,76 @@ class TransformResult(BaseModel):
     new_grade: float
 
 
+# ---------------------------------------------------------------------------
+# Phase 1 / 2 — Enhanced simplification pipeline
+# ---------------------------------------------------------------------------
+
+
+class SimplifyRequest(BaseModel):
+    """Request for the grade-level simplification pipeline."""
+
+    input_text: str = Field(..., min_length=1, description="The text to simplify")
+    target_grade: float = Field(
+        ..., ge=1.0, le=16.0, description="Target grade level (1–16, e.g. 5.0 for Grade 5)"
+    )
+    chunking: bool = Field(
+        False, description="Dyslexia Support Mode: split long sentences into short chunks"
+    )
+    preserve_keywords: bool = Field(
+        False, description="Lock key nouns and STEM vocabulary during rewriting"
+    )
+    mode: str = Field(
+        "standard",
+        description="Rewrite mode: 'standard' or 'esl' (simpler grammar for non-native speakers)",
+    )
+    instruction_mode: bool = Field(
+        False,
+        description="Homework Instruction Mode: convert instructions into numbered steps",
+    )
+    dyslexia_mode: bool = Field(
+        False,
+        description="Apply dyslexia-friendly formatting (short paragraphs, extra spacing)",
+    )
+
+
+class SimplifyResult(BaseModel):
+    """Structured result from the simplification pipeline."""
+
+    original_level: float = Field(..., description="Estimated grade level of the original text")
+    target_level: float = Field(..., description="Requested target grade level")
+    final_level: float = Field(..., description="Achieved grade level after rewriting")
+    meaning_score: float | None = Field(
+        None, description="Cosine similarity score (0–1) measuring meaning preservation"
+    )
+    simplified_text: str = Field(..., description="The rewritten, simplified text")
+    keywords_preserved: list[str] = Field(
+        default_factory=list, description="Keywords that were locked during rewriting"
+    )
+
+
+class WorksheetRequest(BaseModel):
+    """Request to generate three differentiated versions of a worksheet."""
+
+    worksheet_text: str = Field(
+        ..., min_length=1, description="The teacher-provided worksheet text to differentiate"
+    )
+
+
+class WorksheetResult(BaseModel):
+    """Three differentiated versions of the worksheet."""
+
+    advanced_version: str = Field(..., description="High School / College level version")
+    standard_version: str = Field(..., description="Middle School level version")
+    simplified_version: str = Field(..., description="Elementary level version")
+    advanced_grade: float
+    standard_grade: float
+    simplified_grade: float
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 
     status: str
     version: str
     ollama_available: bool
+    semantic_scoring_available: bool = False
