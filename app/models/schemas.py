@@ -83,6 +83,21 @@ class TransformResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ReadabilityDetectionResult(BaseModel):
+    """
+    Focused readability snapshot returned by core/readability.detect_readability().
+    Included in SimplifyResult to bracket the pipeline with before/after grades.
+    """
+
+    flesch_kincaid: float = Field(..., description="Flesch-Kincaid Grade Level")
+    coleman_liau: float = Field(..., description="Coleman-Liau Index")
+    smog: float = Field(..., description="SMOG Index")
+    ari: float = Field(..., description="Automated Readability Index")
+    average_grade: float = Field(
+        ..., description="Mean of the four formula scores — primary comparable grade"
+    )
+
+
 class SimplifyRequest(BaseModel):
     """Request for the grade-level simplification pipeline."""
 
@@ -122,6 +137,14 @@ class SimplifyResult(BaseModel):
     simplified_text: str = Field(..., description="The rewritten, simplified text")
     keywords_preserved: list[str] = Field(
         default_factory=list, description="Keywords that were locked during rewriting"
+    )
+    original_readability: ReadabilityDetectionResult | None = Field(
+        None,
+        description="Readability scores for the original text (FK, Coleman-Liau, SMOG, ARI, avg)",
+    )
+    final_readability: ReadabilityDetectionResult | None = Field(
+        None,
+        description="Readability scores for the simplified text (FK, Coleman-Liau, SMOG, ARI, avg)",
     )
 
 

@@ -3,9 +3,11 @@
 from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
+from app.core.readability import detect_readability
 from app.models.schemas import (
     AnalysisResult,
     HealthResponse,
+    ReadabilityDetectionResult,
     SimplifyRequest,
     SimplifyResult,
     TextInput,
@@ -222,6 +224,25 @@ async def simplify(request: SimplifyRequest):
     # Step 7: semantic similarity
     meaning_score = semantic_svc.compute_similarity(text, final_text)
 
+    # Step 8: readability detection — bracket original and final text
+    _orig_rd = detect_readability(text)
+    _final_rd = detect_readability(final_text)
+
+    orig_readability = ReadabilityDetectionResult(
+        flesch_kincaid=_orig_rd.flesch_kincaid,
+        coleman_liau=_orig_rd.coleman_liau,
+        smog=_orig_rd.smog,
+        ari=_orig_rd.ari,
+        average_grade=_orig_rd.average_grade,
+    )
+    final_readability = ReadabilityDetectionResult(
+        flesch_kincaid=_final_rd.flesch_kincaid,
+        coleman_liau=_final_rd.coleman_liau,
+        smog=_final_rd.smog,
+        ari=_final_rd.ari,
+        average_grade=_final_rd.average_grade,
+    )
+
     return SimplifyResult(
         original_level=original_level,
         target_level=request.target_grade,
@@ -229,6 +250,8 @@ async def simplify(request: SimplifyRequest):
         meaning_score=meaning_score,
         simplified_text=final_text,
         keywords_preserved=keywords if request.preserve_keywords else [],
+        original_readability=orig_readability,
+        final_readability=final_readability,
     )
 
 
