@@ -1,8 +1,8 @@
 # Reading Difficulty Transformer
 
-A local-first classroom accessibility engine that **analyzes**, **simplifies**, and **differentiates** text for students, teachers, ESL learners, and readers with dyslexia — powered by [Ollama](https://ollama.com) and traditional readability formulas.
+A local-first classroom accessibility engine that **analyzes**, **simplifies**, and **differentiates** text for students, teachers, ESL learners, and readers with dyslexia — powered by local Ollama, optional Claude API, and traditional readability formulas.
 
-> **100% local & private** — your text never leaves your machine.
+> **Local-first & private** — your text stays on your machine unless you explicitly connect a Claude API key.
 
 ---
 
@@ -10,7 +10,7 @@ A local-first classroom accessibility engine that **analyzes**, **simplifies**, 
 
 | Mode | Who it's for | What it returns |
 |------|-------------|-----------------|
-| **Analyze** | Anyone | 7 readability scores, difficulty level, AI analysis, suggestions |
+| **Analyze** | Anyone | 7 readability scores, difficulty level, AI text-type detection, AI analysis, suggestions |
 | **Simplify** | Teachers, students, ESL learners | Grade-targeted rewrite with keyword locking, dyslexia support, meaning score |
 | **Worksheet** | Teachers | 3 differentiated versions (Advanced / Standard / Simplified) in one click |
 | **Transform** | General use | Quick rewrite to a named level (Elementary → College) |
@@ -21,10 +21,12 @@ A local-first classroom accessibility engine that **analyzes**, **simplifies**, 
 
 ### Analyze Mode
 - **7 readability formulas** — Flesch Reading Ease, Flesch-Kincaid, Gunning Fog, SMOG, Coleman-Liau, ARI, Dale-Chall
+- **Hover tooltips** — each score name shows a detailed description of what it measures and how to interpret it
+- **AI text type detection** — the LLM classifies the passage as News Article, Novel Excerpt, Play, Textbook Chapter, Essay, Dialogue, etc.
 - **Composite grade level** — weighted consensus across all formulas
 - **Difficulty classification** — Elementary, Middle School, High School, College, Graduate
 - **Text statistics** — word count, sentence count, syllable analysis, complex word %
-- **AI qualitative analysis** via Ollama (graceful fallback to formula-only if offline)
+- **AI qualitative analysis** — via Claude API or local Ollama, with a backend chip showing which was used
 - **Actionable suggestions** to simplify text
 
 ### Simplify Mode (Grade-Level Slider)
@@ -36,8 +38,8 @@ A local-first classroom accessibility engine that **analyzes**, **simplifies**, 
 - **ESL Mode** — simplified grammar, SVO structure, no idioms
 - **Instruction Mode** — converts homework instructions into numbered action steps
 - **Automatic verification loop** — checks achieved grade level; retries up to 3× if outside ±0.5 grade tolerance
-- **Semantic similarity score** — cosine similarity between original and simplified text (requires `sentence-transformers`)
-- **Structured JSON output** — `original_level`, `target_level`, `final_level`, `meaning_score`, `simplified_text`
+- **Semantic similarity score** — cosine similarity via sentence-transformers `all-MiniLM-L6-v2` (optional)
+- **Structured JSON output** — `original_text`, `simplified_text`, `readability_before`, `readability_after`, `semantic_preservation_score`
 
 ### Worksheet Generator
 - Paste any text; receive **three differentiated versions** in one request
@@ -49,6 +51,13 @@ A local-first classroom accessibility engine that **analyzes**, **simplifies**, 
 - Quick named-level rewriting: Elementary, Middle School, High School, College
 - Before/after grade comparison
 
+### Dual Backend (Ollama + Claude API)
+- **Local Ollama (default)** — zero-cost, fully private, no account needed
+- **Claude API (optional)** — supply an API key in Settings for stronger, more accurate responses
+- Per-request routing — each call picks whichever backend is available
+- API key is stored in browser `localStorage` only; never persisted server-side
+- Clear backend status chip on each AI analysis result
+
 ---
 
 ## Tech Stack
@@ -57,7 +66,8 @@ A local-first classroom accessibility engine that **analyzes**, **simplifies**, 
 |-------|-----------|
 | **Backend** | Python 3.10+, FastAPI, Uvicorn |
 | **NLP** | textstat, NLTK |
-| **AI** | Ollama (local LLM — llama3.2 default) |
+| **Local AI** | Ollama (llama3.2 default) |
+| **Cloud AI (optional)** | Anthropic Claude API (`claude-sonnet-4-5` default) |
 | **Semantic Scoring** | sentence-transformers `all-MiniLM-L6-v2` (optional) |
 | **Frontend** | Vanilla HTML/CSS/JS (Jinja2 templates) |
 | **Config** | Pydantic Settings, `.env` files |
@@ -70,7 +80,7 @@ A local-first classroom accessibility engine that **analyzes**, **simplifies**, 
 ### Prerequisites
 
 - **Python 3.10+**
-- **Ollama** — [Install Ollama](https://ollama.com/download)
+- **Ollama** — [Install Ollama](https://ollama.com/download) (optional if you're using a Claude API key instead)
 
 ### 1. Clone the Repository
 
@@ -96,19 +106,14 @@ nltk.download('stopwords')
 "
 ```
 
-### 4. Pull an Ollama Model
+### 4. Pull an Ollama Model (optional if using Claude API)
 
 ```bash
 ollama pull llama3.2
-```
-
-### 5. Start Ollama
-
-```bash
 ollama serve
 ```
 
-### 6. Run the App
+### 5. Run the App
 
 ```bash
 python3 run.py
@@ -118,12 +123,29 @@ Open **http://localhost:8000** in your browser.
 
 ---
 
+## Using a Claude API Key
+
+For stronger, more accurate responses than the default local model:
+
+1. Get an API key from [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)
+2. Click the **gear icon** in the top-right of the app
+3. Paste your key (starts with `sk-ant-`) and click **Save Key**
+4. All AI tasks now route through Claude. The header badge switches to **"Claude API Active"**
+
+**Security notes:**
+- Your key is stored only in your browser's `localStorage`
+- The server never persists it — it's passed per-request in memory and forwarded directly to Anthropic's API
+- Click **Clear** in Settings at any time to remove it
+- To use a different browser profile or device, re-enter the key there
+
+---
+
 ## Optional: Semantic Similarity Scoring
 
 Install `sentence-transformers` to enable the meaning preservation score in Simplify mode:
 
 ```bash
-pip install sentence-transformers
+pip install sentence-transformers scikit-learn
 ```
 
 The model (`all-MiniLM-L6-v2`, ~80MB) downloads automatically on first use and runs fully locally.
@@ -139,7 +161,7 @@ cp .env.example .env
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2` | Model for all AI tasks |
+| `OLLAMA_MODEL` | `llama3.2` | Local model name |
 | `HOST` | `0.0.0.0` | Server bind address |
 | `PORT` | `8000` | Server port |
 | `DEBUG` | `true` | Enable hot-reload |
@@ -165,8 +187,12 @@ cp .env.example .env
 
 **Request:**
 ```json
-{ "text": "Your text here (minimum 10 words)..." }
+{
+  "text": "Your text here (minimum 10 words)...",
+  "api_key": "sk-ant-..."
+}
 ```
+The `api_key` field is optional — when present, uses Claude API; otherwise uses Ollama.
 
 **Response:**
 ```json
@@ -175,6 +201,8 @@ cp .env.example .env
   "scores": { "flesch_reading_ease": 52.3, "flesch_kincaid_grade": 10.2, ... },
   "statistics": { "word_count": 150, "sentence_count": 8, ... },
   "ai_analysis": "The text demonstrates moderate complexity...",
+  "text_type": "News Article",
+  "ai_backend": "claude",
   "suggestions": ["Shorten sentences...", "Use simpler vocabulary..."]
 }
 ```
@@ -192,18 +220,34 @@ cp .env.example .env
   "preserve_keywords": true,
   "mode": "standard",
   "instruction_mode": false,
-  "dyslexia_mode": false
+  "dyslexia_mode": false,
+  "api_key": "sk-ant-..."
 }
 ```
 
 **Response:**
 ```json
 {
+  "original_text": "The mitochondria produces...",
+  "simplified_text": "The mitochondria helps the cell make energy.\n\nThis process is called cellular respiration.",
   "original_level": 9.2,
   "target_level": 5.0,
   "final_level": 5.4,
-  "meaning_score": 0.91,
-  "simplified_text": "The mitochondria helps the cell make energy.\n\nThis process is called cellular respiration.",
+  "readability_before": {
+    "flesch_kincaid": 9.5,
+    "coleman_liau": 10.1,
+    "smog": 8.8,
+    "ari": 8.3,
+    "average_grade": 9.2
+  },
+  "readability_after": {
+    "flesch_kincaid": 5.1,
+    "coleman_liau": 5.6,
+    "smog": 5.3,
+    "ari": 5.6,
+    "average_grade": 5.4
+  },
+  "semantic_preservation_score": 0.91,
   "keywords_preserved": ["mitochondria", "respiration", "atp"]
 }
 ```
@@ -219,6 +263,7 @@ cp .env.example .env
 | `mode` | string | `"standard"` | `"standard"` or `"esl"` |
 | `instruction_mode` | bool | false | Convert instructions to numbered steps |
 | `dyslexia_mode` | bool | false | Short paragraphs, each sentence on its own line |
+| `api_key` | string | null | Optional Claude API key |
 
 ---
 
@@ -226,7 +271,7 @@ cp .env.example .env
 
 **Request:**
 ```json
-{ "worksheet_text": "Read the passage and answer the following questions..." }
+{ "worksheet_text": "Read the passage and answer the following questions...", "api_key": "sk-ant-..." }
 ```
 
 **Response:**
@@ -247,7 +292,7 @@ cp .env.example .env
 
 **Request:**
 ```json
-{ "text": "Complex academic text...", "target_level": "middle_school" }
+{ "text": "Complex academic text...", "target_level": "middle_school", "api_key": "sk-ant-..." }
 ```
 
 **Response:**
@@ -273,10 +318,8 @@ from app.services.forge_agent import ReadingDifficultyAgent
 
 agent = ReadingDifficultyAgent(api_base="http://localhost:8000/api")
 
-# Detect reading level
 result = await agent.detect_level("Your text here...")
 
-# Simplify to Grade 5
 result = await agent.simplify_text(
     input_text="...",
     target_grade=5.0,
@@ -284,7 +327,6 @@ result = await agent.simplify_text(
     mode="esl",
 )
 
-# Generate worksheet versions
 result = await agent.generate_versions("Worksheet text here...")
 ```
 
@@ -298,25 +340,28 @@ All methods are async and return structured dicts matching the API response sche
 Reading-Dificulty-Transformer/
 ├── app/
 │   ├── api/
-│   │   └── routes.py             # All endpoints: analyze, simplify, worksheet_versions, transform, health
+│   │   └── routes.py             # All endpoints; routes to Claude or Ollama based on api_key
 │   ├── core/
-│   │   └── config.py             # Pydantic settings (env vars)
+│   │   ├── config.py             # Pydantic settings
+│   │   ├── readability.py        # detect_readability() — focused 4-formula grade snapshot
+│   │   └── semantic_similarity.py  # semantic_preservation_score() — sklearn-based cosine similarity
 │   ├── models/
-│   │   └── schemas.py            # Request/response Pydantic models
+│   │   └── schemas.py            # Pydantic request/response models
 │   ├── services/
-│   │   ├── readability.py        # Readability formulas + composite grade scoring
-│   │   ├── ollama_client.py      # Ollama integration (analysis, simplify, worksheet)
+│   │   ├── readability.py        # All 7 readability formulas + composite grade scoring
+│   │   ├── ollama_client.py      # Local Ollama integration (analyze, detect_text_type, simplify, worksheet)
+│   │   ├── claude_client.py      # Anthropic Claude API integration (stronger alternative to Ollama)
 │   │   ├── simplifier.py         # Vocab replacement, keyword extraction, chunking, prompt builder
-│   │   ├── semantic.py           # Cosine similarity scoring (sentence-transformers, optional)
+│   │   ├── semantic.py           # Legacy numpy-based semantic service (still used by /health)
 │   │   └── forge_agent.py        # ReadingDifficultyAgent — Forge AI / multi-agent wrapper
 │   └── main.py                   # FastAPI app entry point
 ├── static/
-│   ├── css/style.css             # Dark-theme UI styles
-│   └── js/app.js                 # Frontend logic (4 tabs, API calls, rendering)
+│   ├── css/style.css             # Dark-theme UI styles (with tooltips, settings panel, backend chips)
+│   └── js/app.js                 # Frontend logic (4 tabs, API calls, settings panel, tooltip data)
 ├── templates/
-│   └── index.html                # Main page (4 tabs: Analyze, Simplify, Worksheet, Transform)
+│   └── index.html                # Main page (4 tabs + settings panel + text type display)
 ├── tests/
-│   └── test_readability.py       # Readability module tests
+│   └── test_readability.py
 ├── .env.example
 ├── pyproject.toml
 ├── requirements.txt
@@ -344,7 +389,7 @@ INPUT TEXT
 ④ Build LLM prompt with grade target + active flags (chunking, ESL, instruction mode...)
     │
     ▼
-⑤ Send to Ollama → rewritten text
+⑤ Send to Claude API (if api_key provided) or Ollama → rewritten text
     │
     ▼
 ⑥ Verify achieved grade level
@@ -355,27 +400,31 @@ INPUT TEXT
 ⑦ Apply post-processing (chunking splits, dyslexia formatting)
     │
     ▼
-⑧ Compute semantic similarity score (if sentence-transformers installed)
+⑧ Compute semantic similarity score (sklearn cosine_similarity over sentence embeddings)
     │
     ▼
-⑨ Return structured JSON
+⑨ Bracket with detect_readability() before + after
+    │
+    ▼
+⑩ Return structured JSON
 ```
 
 ---
 
 ## Graceful Degradation
 
-| Feature | Ollama Online | Ollama Offline | sentence-transformers missing |
-|---------|:---:|:---:|:---:|
-| Readability scores | ✅ | ✅ | ✅ |
-| Text statistics | ✅ | ✅ | ✅ |
-| Difficulty classification | ✅ | ✅ | ✅ |
-| Suggestions | ✅ | ✅ | ✅ |
-| AI qualitative analysis | ✅ | ❌ skipped | ✅ |
-| Text transformation | ✅ | ❌ error | ✅ |
-| Simplify pipeline | ✅ | ❌ error | ✅ |
-| Semantic similarity score | ✅ | ✅ | ❌ null |
-| Worksheet generator | ✅ | ❌ error | ✅ |
+| Feature | Ollama + Claude | Ollama only | Claude only | Neither |
+|---------|:---:|:---:|:---:|:---:|
+| Readability scores | ✅ | ✅ | ✅ | ✅ |
+| Text statistics | ✅ | ✅ | ✅ | ✅ |
+| Difficulty classification | ✅ | ✅ | ✅ | ✅ |
+| Suggestions | ✅ | ✅ | ✅ | ✅ |
+| AI qualitative analysis | ✅ Claude | ✅ Ollama | ✅ Claude | ❌ skipped |
+| Text type detection | ✅ Claude | ✅ Ollama | ✅ Claude | ❌ skipped |
+| Text transformation | ✅ Claude | ✅ Ollama | ✅ Claude | ❌ error |
+| Simplify pipeline | ✅ Claude | ✅ Ollama | ✅ Claude | ❌ error |
+| Worksheet generator | ✅ Claude | ✅ Ollama | ✅ Claude | ❌ error |
+| Semantic similarity | Optional | Optional | Optional | Optional |
 
 ---
 
@@ -430,6 +479,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 - [textstat](https://github.com/textstat/textstat) — Readability formula implementations
 - [Ollama](https://ollama.com) — Local LLM inference
+- [Anthropic Claude API](https://docs.anthropic.com) — Cloud LLM backend
 - [FastAPI](https://fastapi.tiangolo.com) — High-performance Python API framework
 - [NLTK](https://www.nltk.org) — Natural language processing toolkit
 - [sentence-transformers](https://www.sbert.net) — Semantic similarity scoring

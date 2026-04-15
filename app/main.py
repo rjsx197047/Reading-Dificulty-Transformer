@@ -30,4 +30,4 @@ app.include_router(api_router, prefix="/api", tags=["analysis"])
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Serve the main single-page UI."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")

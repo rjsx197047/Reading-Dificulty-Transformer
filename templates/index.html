@@ -9,13 +9,63 @@
 <body>
     <div class="container">
         <header>
-            <h1>Reading Difficulty Transformer</h1>
+            <div class="header-top">
+                <h1>Reading Difficulty Transformer</h1>
+                <button id="settings-btn" class="icon-btn" title="Settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
+            </div>
             <p class="subtitle">Analyze and transform text complexity — locally and privately</p>
             <div class="status-badges">
+                <div id="ai-backend-status" class="status-badge status-checking">Checking backend...</div>
                 <div id="ollama-status" class="status-badge status-checking">Checking Ollama...</div>
                 <div id="semantic-status" class="status-badge status-checking">Checking Semantic...</div>
             </div>
         </header>
+
+        <!-- Settings Panel -->
+        <div id="settings-panel" class="settings-panel hidden">
+            <div class="settings-header">
+                <h3>Settings</h3>
+                <button id="settings-close" class="icon-btn-small" title="Close">×</button>
+            </div>
+            <div class="settings-body">
+                <div class="settings-section">
+                    <label for="api-key-input" class="settings-label">
+                        Claude API Key <span class="settings-badge-optional">Optional</span>
+                    </label>
+                    <p class="settings-hint">
+                        Provide a Claude API key for stronger, more accurate AI responses.
+                        When set, all AI tasks use Claude instead of local Ollama.
+                        Your key is stored only in this browser — it's never sent to any server except Anthropic's API.
+                    </p>
+                    <div class="api-key-input-group">
+                        <input
+                            type="password"
+                            id="api-key-input"
+                            class="api-key-input"
+                            placeholder="sk-ant-api03-..."
+                            autocomplete="off"
+                            spellcheck="false"
+                        >
+                        <button id="api-key-toggle" class="icon-btn-small" title="Show/hide key">👁</button>
+                    </div>
+                    <div class="settings-actions">
+                        <button id="api-key-save" class="btn btn-primary btn-sm">Save Key</button>
+                        <button id="api-key-clear" class="btn btn-secondary btn-sm">Clear</button>
+                    </div>
+                    <div id="api-key-status" class="api-key-status"></div>
+                </div>
+                <div class="settings-section">
+                    <p class="settings-footer">
+                        Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>
+                    </p>
+                </div>
+            </div>
+        </div>
 
         <!-- Tab Navigation -->
         <nav class="tabs">
@@ -45,6 +95,10 @@
                         <div>
                             <h2 id="difficulty-level">—</h2>
                             <p id="difficulty-grade" class="grade-range"></p>
+                            <div id="text-type-row" class="text-type-row hidden">
+                                <span class="text-type-label">Detected as</span>
+                                <span id="text-type-value" class="text-type-value">—</span>
+                            </div>
                         </div>
                         <div id="confidence-ring" class="confidence-ring">
                             <span id="confidence-value">0%</span>

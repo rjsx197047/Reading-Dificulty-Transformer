@@ -5,6 +5,10 @@ class TextInput(BaseModel):
     """Input schema for text analysis."""
 
     text: str = Field(..., min_length=1, description="The text to analyze for reading difficulty")
+    api_key: str | None = Field(
+        None,
+        description="Optional Claude API key (sk-ant-...). When provided, uses Claude for AI tasks instead of local Ollama.",
+    )
 
 
 class ReadabilityScores(BaseModel):
@@ -51,7 +55,14 @@ class AnalysisResult(BaseModel):
     scores: ReadabilityScores
     statistics: TextStatistics
     ai_analysis: str | None = Field(
-        None, description="AI-powered qualitative analysis from Ollama (null if unavailable)"
+        None, description="AI-powered qualitative analysis (null if unavailable)"
+    )
+    text_type: str | None = Field(
+        None,
+        description="AI-detected text type/genre (e.g. 'News Article', 'Play', 'Novel Excerpt')",
+    )
+    ai_backend: str = Field(
+        "none", description="Which AI backend was used: 'claude', 'ollama', or 'none'"
     )
     suggestions: list[str] = Field(
         default_factory=list, description="Suggestions to simplify the text"
@@ -64,6 +75,9 @@ class TransformRequest(BaseModel):
     text: str = Field(..., min_length=1, description="The text to transform")
     target_level: str = Field(
         ..., description="Target level: elementary, middle_school, high_school, college"
+    )
+    api_key: str | None = Field(
+        None, description="Optional Claude API key. When provided, uses Claude instead of Ollama."
     )
 
 
@@ -123,6 +137,10 @@ class SimplifyRequest(BaseModel):
         False,
         description="Apply dyslexia-friendly formatting (short paragraphs, extra spacing)",
     )
+    api_key: str | None = Field(
+        None,
+        description="Optional Claude API key. When provided, uses Claude instead of Ollama.",
+    )
 
 
 class SimplifyResult(BaseModel):
@@ -165,6 +183,9 @@ class WorksheetRequest(BaseModel):
 
     worksheet_text: str = Field(
         ..., min_length=1, description="The teacher-provided worksheet text to differentiate"
+    )
+    api_key: str | None = Field(
+        None, description="Optional Claude API key. When provided, uses Claude instead of Ollama."
     )
 
 

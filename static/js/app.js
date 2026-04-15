@@ -1,3 +1,21 @@
+// ===== Score Descriptions (for hover tooltips) =====
+const SCORE_DESCRIPTIONS = {
+  "Flesch Ease":
+    "Flesch Reading Ease: a 0–100 score where higher means easier. 60–70 is plain English understood by 13–15 year olds. Below 30 is very difficult (academic / legal).",
+  "Flesch-Kincaid":
+    "Flesch-Kincaid Grade Level: the US grade needed to understand the text. A score of 8.0 means an 8th grader can read it comfortably.",
+  "Gunning Fog":
+    "Gunning Fog Index: years of formal education required. Based on sentence length and the percentage of complex words (3+ syllables).",
+  SMOG:
+    "SMOG Index (Simple Measure of Gobbledygook): years of education needed. Designed for health and medical materials; reliable on short passages.",
+  "Coleman-Liau":
+    "Coleman-Liau Index: US grade level based on characters per word and words per sentence. No syllable counting — often more accurate on dense prose.",
+  ARI:
+    "Automated Readability Index: US grade level from character and word counts. Originally developed for the US Army. Good for real-time text.",
+  "Dale-Chall":
+    "Dale-Chall Readability Score: uses a list of 3,000 familiar words. Score under 4.9 = 4th grade or below; above 9.0 = college level.",
+};
+
 // ===== DOM Elements =====
 const analyzeInput = document.getElementById("analyze-input");
 const analyzeBtn = document.getElementById("analyze-btn");
@@ -26,6 +44,91 @@ const loading = document.getElementById("loading");
 const loadingText = document.getElementById("loading-text");
 const ollamaStatus = document.getElementById("ollama-status");
 const semanticStatus = document.getElementById("semantic-status");
+const aiBackendStatus = document.getElementById("ai-backend-status");
+
+// Settings panel
+const settingsBtn = document.getElementById("settings-btn");
+const settingsPanel = document.getElementById("settings-panel");
+const settingsClose = document.getElementById("settings-close");
+const apiKeyInput = document.getElementById("api-key-input");
+const apiKeyToggle = document.getElementById("api-key-toggle");
+const apiKeySave = document.getElementById("api-key-save");
+const apiKeyClear = document.getElementById("api-key-clear");
+const apiKeyStatus = document.getElementById("api-key-status");
+
+// ===== API Key Management =====
+const API_KEY_STORAGE = "claude_api_key";
+
+function getApiKey() {
+  return localStorage.getItem(API_KEY_STORAGE) || null;
+}
+
+function setApiKey(key) {
+  if (key && key.trim()) {
+    localStorage.setItem(API_KEY_STORAGE, key.trim());
+  } else {
+    localStorage.removeItem(API_KEY_STORAGE);
+  }
+  updateApiKeyUI();
+  updateBackendBadge();
+}
+
+function updateApiKeyUI() {
+  const key = getApiKey();
+  if (key) {
+    apiKeyInput.value = key;
+    apiKeyStatus.textContent = `✓ Key saved (${key.slice(0, 12)}...${key.slice(-4)})`;
+    apiKeyStatus.className = "api-key-status api-key-status-ok";
+  } else {
+    apiKeyInput.value = "";
+    apiKeyStatus.textContent = "No key set — using local Ollama";
+    apiKeyStatus.className = "api-key-status api-key-status-empty";
+  }
+}
+
+function updateBackendBadge() {
+  const key = getApiKey();
+  if (key) {
+    aiBackendStatus.textContent = "Claude API Active";
+    aiBackendStatus.className = "status-badge status-claude";
+  } else {
+    aiBackendStatus.textContent = "Local Ollama Mode";
+    aiBackendStatus.className = "status-badge status-dim";
+  }
+}
+
+// Settings panel open/close
+settingsBtn.addEventListener("click", () => {
+  settingsPanel.classList.toggle("hidden");
+  if (!settingsPanel.classList.contains("hidden")) {
+    updateApiKeyUI();
+  }
+});
+settingsClose.addEventListener("click", () => settingsPanel.classList.add("hidden"));
+
+// Toggle key visibility
+apiKeyToggle.addEventListener("click", () => {
+  apiKeyInput.type = apiKeyInput.type === "password" ? "text" : "password";
+});
+
+apiKeySave.addEventListener("click", () => {
+  const key = apiKeyInput.value.trim();
+  if (!key) {
+    apiKeyStatus.textContent = "Please enter a key";
+    apiKeyStatus.className = "api-key-status api-key-status-err";
+    return;
+  }
+  if (!key.startsWith("sk-ant-")) {
+    apiKeyStatus.textContent = "Key must start with 'sk-ant-'";
+    apiKeyStatus.className = "api-key-status api-key-status-err";
+    return;
+  }
+  setApiKey(key);
+});
+
+apiKeyClear.addEventListener("click", () => {
+  setApiKey(null);
+});
 
 // ===== Tab Switching =====
 document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -99,8 +202,16 @@ async function checkHealth() {
     semanticStatus.textContent = "Server Unreachable";
     semanticStatus.className = "status-badge status-offline";
   }
+  updateBackendBadge();
 }
 checkHealth();
+
+// Helper: attach api_key to any request payload if set
+function withApiKey(payload) {
+  const key = getApiKey();
+  if (key) return { ...payload, api_key: key };
+  return payload;
+}
 
 // ===== Analyze =====
 analyzeBtn.addEventListener("click", async () => {
@@ -112,7 +223,7 @@ analyzeBtn.addEventListener("click", async () => {
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(withApiKey({ text })),
     });
     if (!res.ok) throw new Error((await res.json()).detail || "Analysis failed");
     renderAnalyzeResults(await res.json());
@@ -129,6 +240,16 @@ function renderAnalyzeResults(data) {
   document.getElementById("confidence-value").textContent = `${Math.round(data.difficulty.confidence * 100)}%`;
   document.getElementById("difficulty-desc").textContent = data.difficulty.description;
 
+  // Text type
+  const textTypeRow = document.getElementById("text-type-row");
+  if (data.text_type) {
+    document.getElementById("text-type-value").textContent = data.text_type;
+    textTypeRow.classList.remove("hidden");
+  } else {
+    textTypeRow.classList.add("hidden");
+  }
+
+  // Scores with tooltips
   const scoresGrid = document.getElementById("scores-grid");
   const scoreEntries = [
     ["Flesch Ease", data.scores.flesch_reading_ease],
@@ -140,7 +261,13 @@ function renderAnalyzeResults(data) {
     ["Dale-Chall", data.scores.dale_chall],
   ];
   scoresGrid.innerHTML = scoreEntries
-    .map(([label, value]) => `<div class="score-item"><span class="label">${label}</span><span class="value">${value}</span></div>`)
+    .map(([label, value]) => {
+      const desc = (SCORE_DESCRIPTIONS[label] || "").replace(/"/g, "&quot;");
+      return `<div class="score-item has-tooltip" data-tooltip="${desc}" title="${desc}">
+        <span class="label">${label} <span class="info-ico">ⓘ</span></span>
+        <span class="value">${value}</span>
+      </div>`;
+    })
     .join("");
 
   const statsGrid = document.getElementById("stats-grid");
@@ -158,6 +285,9 @@ function renderAnalyzeResults(data) {
 
   const aiCard = document.getElementById("ai-card");
   if (data.ai_analysis) {
+    const backend = data.ai_backend === "claude" ? "Claude" : data.ai_backend === "ollama" ? "Ollama" : "AI";
+    const header = aiCard.querySelector("h3");
+    if (header) header.innerHTML = `AI Analysis <span class="backend-chip backend-${data.ai_backend}">${backend}</span>`;
     document.getElementById("ai-analysis").textContent = data.ai_analysis;
     aiCard.classList.remove("hidden");
   } else {
@@ -177,7 +307,7 @@ simplifyBtn.addEventListener("click", async () => {
 
   showLoading("Simplifying text — this may take a moment...");
   try {
-    const payload = {
+    const payload = withApiKey({
       input_text: text,
       target_grade: parseFloat(gradeSlider.value),
       chunking: document.getElementById("opt-chunking").checked,
@@ -185,7 +315,7 @@ simplifyBtn.addEventListener("click", async () => {
       mode: document.getElementById("simplify-mode").value,
       instruction_mode: document.getElementById("opt-instructions").checked,
       dyslexia_mode: document.getElementById("opt-dyslexia").checked,
-    };
+    });
 
     const res = await fetch("/api/simplify", {
       method: "POST",
@@ -206,15 +336,15 @@ function renderSimplifyResults(data) {
   document.getElementById("target-grade-val").textContent = `${data.target_level}`;
   document.getElementById("final-grade-val").textContent = `${data.final_level}`;
 
-  // Color final grade based on proximity to target
   const diff = Math.abs(data.final_level - data.target_level);
   const finalEl = document.getElementById("final-grade-val");
   finalEl.className = "journey-grade " + (diff <= 0.5 ? "grade-success" : diff <= 1.5 ? "grade-warn" : "grade-high");
 
-  // Meaning score
   const meaningRow = document.getElementById("meaning-score-row");
-  if (data.meaning_score !== null && data.meaning_score !== undefined) {
-    const pct = Math.round(data.meaning_score * 100);
+  // Check new field first, fall back to legacy alias
+  const score = data.semantic_preservation_score ?? data.meaning_score;
+  if (score !== null && score !== undefined) {
+    const pct = Math.round(score * 100);
     document.getElementById("meaning-value").textContent = `${pct}%`;
     const bar = document.getElementById("meaning-bar");
     bar.style.width = `${pct}%`;
@@ -224,7 +354,6 @@ function renderSimplifyResults(data) {
     meaningRow.classList.add("hidden");
   }
 
-  // Keywords
   const kwCard = document.getElementById("keywords-card");
   if (data.keywords_preserved && data.keywords_preserved.length > 0) {
     document.getElementById("keywords-list").innerHTML = data.keywords_preserved
@@ -258,7 +387,7 @@ worksheetBtn.addEventListener("click", async () => {
     const res = await fetch("/api/worksheet_versions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ worksheet_text: text }),
+      body: JSON.stringify(withApiKey({ worksheet_text: text })),
     });
     if (!res.ok) throw new Error((await res.json()).detail || "Worksheet generation failed");
     renderWorksheetResults(await res.json());
@@ -301,7 +430,7 @@ transformBtn.addEventListener("click", async () => {
     const res = await fetch("/api/transform", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, target_level: targetLevel.value }),
+      body: JSON.stringify(withApiKey({ text, target_level: targetLevel.value })),
     });
     if (!res.ok) throw new Error((await res.json()).detail || "Transform failed");
     renderTransformResults(await res.json());
@@ -340,7 +469,6 @@ function hideLoading() {
 }
 
 function showError(message) {
-  // Simple inline toast — no external deps
   const toast = document.createElement("div");
   toast.className = "error-toast";
   toast.textContent = `Error: ${message}`;

@@ -76,6 +76,35 @@ Rewritten text:"""
     return await _query_ollama(prompt)
 
 
+async def detect_text_type(text: str) -> str | None:
+    """
+    Ask Ollama to classify what kind of text a passage is
+    (article, news, play, novel excerpt, essay, etc.).
+    Returns a short label (2–5 words) or None on failure.
+    """
+    prompt = f"""Classify the following text into ONE short label describing its type.
+
+Valid examples (but not limited to):
+  News Article, Academic Paper, Textbook Chapter, Play / Drama,
+  Novel Excerpt, Short Story, Personal Essay, Opinion Editorial,
+  Technical Documentation, Scientific Abstract, Legal Document,
+  Recipe, Letter / Correspondence, Poem, Song Lyrics, Speech,
+  Homework Instructions, Blog Post, Advertisement, Dialogue Excerpt
+
+Respond with ONLY the label (no extra words, no punctuation beyond the label).
+
+Text:
+---
+{text[:2500]}
+---
+
+Label:"""
+    result = await _query_ollama(prompt)
+    if result:
+        return result.strip().strip(".'\" \n").split("\n")[0][:60]
+    return None
+
+
 async def simplify_text(prompt: str) -> str | None:
     """
     Send a fully-built simplification prompt to Ollama and return the response.
