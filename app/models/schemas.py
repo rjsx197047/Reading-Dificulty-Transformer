@@ -128,23 +128,35 @@ class SimplifyRequest(BaseModel):
 class SimplifyResult(BaseModel):
     """Structured result from the simplification pipeline."""
 
+    original_text: str = Field(..., description="The original input text")
+    simplified_text: str = Field(..., description="The rewritten, simplified text")
     original_level: float = Field(..., description="Estimated grade level of the original text")
     target_level: float = Field(..., description="Requested target grade level")
     final_level: float = Field(..., description="Achieved grade level after rewriting")
-    meaning_score: float | None = Field(
-        None, description="Cosine similarity score (0–1) measuring meaning preservation"
-    )
-    simplified_text: str = Field(..., description="The rewritten, simplified text")
-    keywords_preserved: list[str] = Field(
-        default_factory=list, description="Keywords that were locked during rewriting"
-    )
-    original_readability: ReadabilityDetectionResult | None = Field(
+    readability_before: ReadabilityDetectionResult | None = Field(
         None,
         description="Readability scores for the original text (FK, Coleman-Liau, SMOG, ARI, avg)",
     )
-    final_readability: ReadabilityDetectionResult | None = Field(
+    readability_after: ReadabilityDetectionResult | None = Field(
         None,
         description="Readability scores for the simplified text (FK, Coleman-Liau, SMOG, ARI, avg)",
+    )
+    semantic_preservation_score: float | None = Field(
+        None,
+        description="Cosine similarity (0–1) between original and simplified embeddings",
+    )
+    keywords_preserved: list[str] = Field(
+        default_factory=list, description="Keywords that were locked during rewriting"
+    )
+    # --- Backward-compatible aliases (existing UI/clients) ---
+    meaning_score: float | None = Field(
+        None, description="Alias for semantic_preservation_score (backward compat)"
+    )
+    original_readability: ReadabilityDetectionResult | None = Field(
+        None, description="Alias for readability_before (backward compat)"
+    )
+    final_readability: ReadabilityDetectionResult | None = Field(
+        None, description="Alias for readability_after (backward compat)"
     )
 
 

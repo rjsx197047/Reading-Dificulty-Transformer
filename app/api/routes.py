@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
 from app.core.readability import detect_readability
+from app.core.semantic_similarity import semantic_preservation_score
 from app.models.schemas import (
     AnalysisResult,
     HealthResponse,
@@ -221,21 +222,21 @@ async def simplify(request: SimplifyRequest):
     if request.dyslexia_mode:
         final_text = apply_dyslexia_formatting(final_text)
 
-    # Step 7: semantic similarity
-    meaning_score = semantic_svc.compute_similarity(text, final_text)
+    # Step 7: semantic preservation scoring (new core module, sklearn-based)
+    sem_score = semantic_preservation_score(text, final_text)
 
     # Step 8: readability detection — bracket original and final text
     _orig_rd = detect_readability(text)
     _final_rd = detect_readability(final_text)
 
-    orig_readability = ReadabilityDetectionResult(
+    readability_before = ReadabilityDetectionResult(
         flesch_kincaid=_orig_rd.flesch_kincaid,
         coleman_liau=_orig_rd.coleman_liau,
         smog=_orig_rd.smog,
         ari=_orig_rd.ari,
         average_grade=_orig_rd.average_grade,
     )
-    final_readability = ReadabilityDetectionResult(
+    readability_after = ReadabilityDetectionResult(
         flesch_kincaid=_final_rd.flesch_kincaid,
         coleman_liau=_final_rd.coleman_liau,
         smog=_final_rd.smog,
@@ -244,14 +245,19 @@ async def simplify(request: SimplifyRequest):
     )
 
     return SimplifyResult(
+        original_text=text,
+        simplified_text=final_text,
         original_level=original_level,
         target_level=request.target_grade,
         final_level=final_grade,
-        meaning_score=meaning_score,
-        simplified_text=final_text,
+        readability_before=readability_before,
+        readability_after=readability_after,
+        semantic_preservation_score=sem_score,
         keywords_preserved=keywords if request.preserve_keywords else [],
-        original_readability=orig_readability,
-        final_readability=final_readability,
+        # Backward-compatible aliases for existing UI/clients
+        meaning_score=sem_score,
+        original_readability=readability_before,
+        final_readability=readability_after,
     )
 
 
