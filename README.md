@@ -39,6 +39,7 @@ A local-first classroom accessibility engine that **analyzes**, **simplifies**, 
 - **Instruction Mode** — converts homework instructions into numbered action steps
 - **Automatic verification loop** — checks achieved grade level; retries up to 3× if outside ±0.5 grade tolerance
 - **Semantic similarity score** — cosine similarity via sentence-transformers `all-MiniLM-L6-v2` (optional)
+- **Instructional suitability scoring** — evaluates grade accuracy, semantic preservation, sentence reduction, and vocabulary simplification (optional)
 - **Structured JSON output** — `original_text`, `simplified_text`, `readability_before`, `readability_after`, `semantic_preservation_score`
 
 ### Worksheet Generator
@@ -149,6 +150,61 @@ pip install sentence-transformers scikit-learn
 ```
 
 The model (`all-MiniLM-L6-v2`, ~80MB) downloads automatically on first use and runs fully locally.
+
+---
+
+## Instructional Suitability Scoring
+
+The `instructional_suitability_score()` function in `app/core/instructional_scoring.py` evaluates whether simplified text is appropriate for classroom use by scoring four key dimensions:
+
+### Scoring Dimensions (Each 0.0–1.0)
+
+1. **Grade Accuracy Score** (35% weight)
+   - Measures how closely the simplified text matches the target grade level
+   - Formula: `max(0, 1 - abs(final_grade - target_grade) / 4.0)`
+   - Perfect accuracy (0 grade difference) = 1.0; 4+ grades off = 0.0
+
+2. **Semantic Preservation Score** (35% weight)
+   - Reuses the semantic similarity score (cosine similarity via sentence embeddings)
+   - Measures whether important meaning and concepts are retained
+   - Defaults to 0.5 if the model is unavailable
+
+3. **Sentence Length Reduction Score** (15% weight)
+   - Measures how much shorter the sentences became
+   - Based on average words per sentence before and after
+   - Positive reduction (shorter sentences) = higher score
+
+4. **Vocabulary Simplification Score** (15% weight)
+   - Measures how much simpler the word choices are
+   - Based on average word length before and after
+   - Word length is a proxy for vocabulary complexity
+
+### Combined Score
+
+The **instructional_suitability_score** combines all four metrics:
+```python
+0.35 × grade_accuracy + 0.35 × semantic + 0.15 × sentence_reduction + 0.15 × vocabulary
+```
+
+Result: A single 0.0–1.0 score where 1.0 = ideal classroom accessibility.
+
+### Usage Example
+
+```python
+from app.core.instructional_scoring import instructional_suitability_score
+
+result = instructional_suitability_score(
+    original_text="Complex academic text...",
+    simplified_text="Simplified version...",
+    readability_before={"average_grade": 10.5},
+    readability_after={"average_grade": 5.2},
+    target_grade=5.0,
+    semantic_score=0.87
+)
+
+print(result["instructional_suitability_score"])  # e.g., 0.85
+print(result["diagnostic"])  # Intermediate values for debugging
+```
 
 ---
 
@@ -344,7 +400,8 @@ Reading-Dificulty-Transformer/
 │   ├── core/
 │   │   ├── config.py             # Pydantic settings
 │   │   ├── readability.py        # detect_readability() — focused 4-formula grade snapshot
-│   │   └── semantic_similarity.py  # semantic_preservation_score() — sklearn-based cosine similarity
+│   │   ├── semantic_similarity.py  # semantic_preservation_score() — sklearn-based cosine similarity
+│   │   └── instructional_scoring.py # instructional_suitability_score() — classroom accessibility evaluation
 │   ├── models/
 │   │   └── schemas.py            # Pydantic request/response models
 │   ├── services/
@@ -361,7 +418,8 @@ Reading-Dificulty-Transformer/
 ├── templates/
 │   └── index.html                # Main page (4 tabs + settings panel + text type display)
 ├── tests/
-│   └── test_readability.py
+│   ├── test_readability.py
+│   └── test_instructional_scoring.py # Unit tests for instructional suitability scoring
 ├── .env.example
 ├── pyproject.toml
 ├── requirements.txt
@@ -425,6 +483,7 @@ INPUT TEXT
 | Simplify pipeline | ✅ Claude | ✅ Ollama | ✅ Claude | ❌ error |
 | Worksheet generator | ✅ Claude | ✅ Ollama | ✅ Claude | ❌ error |
 | Semantic similarity | Optional | Optional | Optional | Optional |
+| Instructional suitability scoring | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
