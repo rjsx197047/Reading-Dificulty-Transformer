@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
+from app.core.differentiation_metadata import generate_differentiation_metadata
 from app.core.readability import detect_readability
 from app.core.semantic_similarity import semantic_preservation_score
 from app.models.schemas import (
@@ -136,6 +137,7 @@ async def transform(request: TransformRequest):
     Transform text to a target reading level.
 
     Uses Claude if an API key is supplied; otherwise falls back to Ollama.
+    Includes differentiation metadata explaining accessibility improvements.
     """
     text = request.text.strip()
     target = request.target_level.lower()
@@ -170,6 +172,28 @@ async def transform(request: TransformRequest):
     new_grade = new_scores.flesch_kincaid_grade
     original_level = classify_difficulty(original_scores).level
 
+    # Compute differentiation metadata for teacher-friendly explanation
+    readability_before = detect_readability(text)
+    readability_after = detect_readability(transformed)
+
+    # Convert readability detection to dict format for metadata generator
+    readability_before_dict = {
+        "average_grade": readability_before.average_grade,
+    }
+    readability_after_dict = {
+        "average_grade": readability_after.average_grade,
+    }
+
+    # Generate differentiation metadata (semantic_score=None for transform, keywords_preserved=[])
+    differentiation_metadata = generate_differentiation_metadata(
+        original_text=text,
+        simplified_text=transformed,
+        readability_before=readability_before_dict,
+        readability_after=readability_after_dict,
+        semantic_score=0.5,  # Default neutral score for transform (no semantic analysis)
+        keywords_preserved=[],  # No keyword preservation in transform mode
+    )
+
     return TransformResult(
         original_text=text,
         transformed_text=transformed,
@@ -177,6 +201,7 @@ async def transform(request: TransformRequest):
         target_level=target,
         original_grade=round(original_grade, 2),
         new_grade=round(new_grade, 2),
+        differentiation_metadata=differentiation_metadata,
     )
 
 

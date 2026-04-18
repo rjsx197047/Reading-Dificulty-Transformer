@@ -90,6 +90,7 @@ class TransformResult(BaseModel):
     target_level: str
     original_grade: float
     new_grade: float
+    differentiation_metadata: dict | None = None  # Teacher-friendly metadata explaining changes
 
 
 # ---------------------------------------------------------------------------
