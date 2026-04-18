@@ -153,6 +153,53 @@ The model (`all-MiniLM-L6-v2`, ~80MB) downloads automatically on first use and r
 
 ---
 
+## Differentiation Metadata Generator
+
+The `generate_differentiation_metadata()` function in `app/core/differentiation_metadata.py` generates teacher-friendly metadata explaining how text changes during simplification. This enables teachers to understand the accessibility improvements at a glance.
+
+### Metadata Fields (12 Dimensions)
+
+The function returns structured information about:
+- **Grade Reduction** — How much the reading difficulty decreased (e.g., 5.3 grade levels)
+- **Sentence Statistics** — Original and simplified sentence counts + average sentence length
+- **Word Statistics** — Word counts and average word length before/after
+- **Semantic Preservation** — Percentage of meaning retained (0.0–1.0)
+- **Keywords Preserved** — Count of protected specialized terms
+- **Accessibility Summary** — Dynamic narrative explaining changes in teacher-friendly language
+
+### Usage Example
+
+```python
+from app.core.differentiation_metadata import generate_differentiation_metadata
+
+metadata = generate_differentiation_metadata(
+    original_text="Complex academic text...",
+    simplified_text="Simpler version...",
+    readability_before={"average_grade": 10.5},
+    readability_after={"average_grade": 5.2},
+    semantic_score=0.87,
+    keywords_preserved=["mitochondria", "ATP"]
+)
+
+print(metadata["grade_reduction"])  # e.g., 5.3
+print(metadata["keywords_preserved_count"])  # 2
+print(metadata["accessibility_summary"])
+# "This rewrite reduced reading difficulty by 5.3 grade levels while breaking 
+#  sentences from 25-word average down to 9-word average. Vocabulary was 
+#  simplified, semantic meaning preserved at 87%, and 2 key terms were protected."
+```
+
+### Narrative Summary
+
+The `accessibility_summary` field provides context-aware explanations:
+- Mentions grade reduction magnitude
+- Describes sentence restructuring (chunking or length reduction)
+- Explains vocabulary simplification impacts
+- Notes semantic preservation quality
+- Highlights protected specialized terms
+
+---
+
 ## Instructional Suitability Scoring
 
 The `instructional_suitability_score()` function in `app/core/instructional_scoring.py` evaluates whether simplified text is appropriate for classroom use by scoring four key dimensions:
@@ -401,7 +448,8 @@ Reading-Dificulty-Transformer/
 │   │   ├── config.py             # Pydantic settings
 │   │   ├── readability.py        # detect_readability() — focused 4-formula grade snapshot
 │   │   ├── semantic_similarity.py  # semantic_preservation_score() — sklearn-based cosine similarity
-│   │   └── instructional_scoring.py # instructional_suitability_score() — classroom accessibility evaluation
+│   │   ├── instructional_scoring.py # instructional_suitability_score() — classroom accessibility evaluation
+│   │   └── differentiation_metadata.py # generate_differentiation_metadata() — teacher-friendly change summary
 │   ├── models/
 │   │   └── schemas.py            # Pydantic request/response models
 │   ├── services/
@@ -419,7 +467,8 @@ Reading-Dificulty-Transformer/
 │   └── index.html                # Main page (4 tabs + settings panel + text type display)
 ├── tests/
 │   ├── test_readability.py
-│   └── test_instructional_scoring.py # Unit tests for instructional suitability scoring
+│   ├── test_instructional_scoring.py # Unit tests for instructional suitability scoring
+│   └── test_differentiation_metadata.py # Unit tests for differentiation metadata generator
 ├── .env.example
 ├── pyproject.toml
 ├── requirements.txt
@@ -484,6 +533,7 @@ INPUT TEXT
 | Worksheet generator | ✅ Claude | ✅ Ollama | ✅ Claude | ❌ error |
 | Semantic similarity | Optional | Optional | Optional | Optional |
 | Instructional suitability scoring | ✅ | ✅ | ✅ | ✅ |
+| Differentiation metadata | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
