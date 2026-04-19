@@ -51,6 +51,10 @@ A local-first classroom accessibility engine that **analyzes**, **simplifies**, 
 ### Transform Mode
 - Quick named-level rewriting: Elementary, Middle School, High School, College
 - Before/after grade comparison
+- **Keyword extraction & preservation tracking** — extracts important terms from original, reports which survived simplification
+- **Semantic similarity scoring** — computes actual meaning preservation (0.0–1.0) via sentence embeddings
+- **Teacher report generation** — Markdown-formatted accessibility assessment with classroom guidance
+- Comprehensive differentiation metadata for teacher-friendly explanation
 
 ### Dual Backend (Ollama + Claude API)
 - **Local Ollama (default)** — zero-cost, fully private, no account needed
@@ -138,6 +142,141 @@ For stronger, more accurate responses than the default local model:
 - The server never persists it — it's passed per-request in memory and forwarded directly to Anthropic's API
 - Click **Clear** in Settings at any time to remove it
 - To use a different browser profile or device, re-enter the key there
+
+---
+
+## Keyword Extraction & Preservation
+
+The `extract_keywords()` function in `app/core/keyword_extractor.py` identifies important terms in original text and tracks whether they survive the simplification process.
+
+### How It Works
+
+- **spaCy noun chunks (preferred)** — When available, extracts multi-word phrases like "mitochondrial membrane", "photosynthesis"
+- **NLTK POS-tagging fallback** — If spaCy unavailable, uses NN/NNS/NNP/NNPS tags to identify nouns
+- **Smart filtering** — Removes stopwords (the, a, an) and enforces minimum 3-character length
+- **Frequency ranking** — Returns top 10 keywords sorted by occurrence in text
+
+### Keyword Preservation Check
+
+The `count_preserved_keywords()` function verifies which original keywords appear in the simplified text:
+- Case-insensitive substring matching
+- Returns list of preserved keywords for teacher review
+- Helps teachers assess whether STEM vocabulary was maintained during simplification
+
+### Usage Example
+
+```python
+from app.core.keyword_extractor import extract_keywords, count_preserved_keywords
+
+# Extract keywords from original text
+original = "Photosynthesis converts solar energy into chemical energy in the chloroplasts."
+keywords = extract_keywords(original)
+# Returns: ['photosynthesis', 'solar energy', 'chemical energy', 'chloroplasts', ...]
+
+# Check which survived simplification
+simplified = "Plants turn sunlight into food using chloroplasts."
+preserved = count_preserved_keywords(keywords, simplified)
+# Returns: ['solar energy' → 'sunlight', 'chloroplasts'] or subset thereof
+```
+
+---
+
+## Semantic Similarity Scoring (Enhanced)
+
+The `compute_semantic_similarity()` function in `app/core/semantic_similarity.py` measures meaning preservation using sentence embeddings.
+
+### What It Does
+
+- **Actual computation, not hardcoded** — Uses sentence-transformers `all-MiniLM-L6-v2` model
+- **Cosine similarity** — Measures semantic overlap between original and simplified text
+- **0.0–1.0 normalization** — Clear interpretation: 0.85+ = excellent, 0.60+ = good, <0.50 = significant loss
+- **Graceful fallback** — Returns None if model unavailable; caller can default to 0.5
+
+### Interpretation Guide
+
+| Score | Meaning |
+|-------|---------|
+| 0.85–1.0 | **Excellent** — Core concepts preserved, minimal loss |
+| 0.70–0.85 | **Good** — Most meaning retained, some simplification |
+| 0.50–0.70 | **Moderate** — Substantial changes, key ideas present |
+| <0.50 | **Limited** — Significant rewording, concepts may shift |
+
+### Usage Example
+
+```python
+from app.core.semantic_similarity import compute_semantic_similarity
+
+original = "The mitochondrion is the site of aerobic cellular respiration, where glucose is oxidized to produce ATP."
+simplified = "Mitochondria are where cells make energy from food."
+
+score = compute_semantic_similarity(original, simplified)
+print(f"Semantic similarity: {score}")  # e.g., 0.82
+
+# Interpretation:
+# 0.82 = Good preservation; most key concepts (mitochondria, energy, food/glucose) retained
+```
+
+---
+
+## Teacher Report Generator
+
+The `generate_teacher_report()` function in `app/core/report_generator.py` creates Markdown-formatted accessibility reports explaining how text was simplified and whether it's suitable for classroom use.
+
+### Report Sections
+
+1. **Reading Level Metrics** — Grade reduction summary (e.g., "reduced by 5.3 grade levels")
+2. **Structural Changes** — Sentence count, average length, word count, vocabulary simplification %
+3. **Semantic Quality** — Meaning preservation score with interpretation
+4. **Keywords & Terminology** — Specialized terms protected or removed
+5. **Summary** — Dynamic narrative explaining changes
+6. **Teacher Notes & Recommendations** — Classroom implementation guidance based on grade level and semantic score
+
+### Example Report Output
+
+```markdown
+# Accessibility Adaptation Report
+
+## Reading Level Metrics
+This simplified text reduces reading difficulty by **5.3 grade levels**, making it more accessible to struggling readers while maintaining content integrity.
+
+## Structural Changes
+### Sentence Structure
+- **Sentence Count:** 8 → 12 (+4 additional chunks)
+- **Average Sentence Length:** 25.0 → 9.1 words
+  - Sentences reduced by **64%**, improving scanability.
+
+### Word Count
+- **Total Words:** 200 → 110 (-45%)
+
+### Vocabulary Simplification
+- **Average Word Length:** 5.2 → 4.1 characters
+  - Vocabulary simplified by **21%** through systematic replacement
+
+## Semantic Quality
+### Meaning Preservation Score: 82%
+**Good preservation** — Most key concepts and meaning are retained.
+
+## Keywords & Terminology
+**3 specialized terms were protected** to maintain domain-specific vocabulary.
+Protected terms:
+- mitochondria
+- photosynthesis
+- chloroplasts
+
+## Summary
+[Generated from metadata and context]
+
+## Teacher Notes & Recommendations
+### For Your Grade Level
+This is a **substantial reduction** in difficulty. Appropriate for students 2-3 grade levels below their peers...
+
+### For Content Integrity
+Most core concepts are preserved. Use this version for students who struggle with reading...
+
+### Implementation Tips
+- Preview this text before classroom use...
+- Consider using the original text with advanced readers...
+```
 
 ---
 
@@ -395,7 +534,11 @@ The `api_key` field is optional — when present, uses Claude API; otherwise use
 
 **Request:**
 ```json
-{ "text": "Complex academic text...", "target_level": "middle_school", "api_key": "sk-ant-..." }
+{ 
+  "text": "Complex academic text...", 
+  "target_level": "middle_school", 
+  "api_key": "sk-ant-..." 
+}
 ```
 
 **Response:**
@@ -406,8 +549,82 @@ The `api_key` field is optional — when present, uses Claude API; otherwise use
   "original_level": "College",
   "target_level": "middle_school",
   "original_grade": 14.2,
-  "new_grade": 7.1
+  "new_grade": 7.1,
+  "semantic_score": 0.82,
+  "original_keywords": ["photosynthesis", "cellular respiration", "ATP", "glucose"],
+  "preserved_keywords": ["photosynthesis", "ATP"],
+  "differentiation_metadata": {
+    "grade_reduction": 7.1,
+    "sentence_count_before": 8,
+    "sentence_count_after": 12,
+    "avg_sentence_length_before": 25.1,
+    "avg_sentence_length_after": 9.1,
+    "word_count_before": 200,
+    "word_count_after": 110,
+    "avg_word_length_before": 5.2,
+    "avg_word_length_after": 4.1,
+    "semantic_preservation_score": 0.82,
+    "keywords_preserved_count": 2,
+    "accessibility_summary": "This rewrite reduced reading difficulty by 7.1 grade levels..."
+  },
+  "teacher_report": "# Accessibility Adaptation Report\n\n## Reading Level Metrics\n..."
 }
+```
+
+**New Response Fields:**
+- `semantic_score` — Computed semantic similarity (0.0–1.0), not hardcoded
+- `original_keywords` — Keywords extracted from original text
+- `preserved_keywords` — Keywords verified to appear in transformed text
+- `teacher_report` — Markdown-formatted classroom guidance report
+
+---
+
+### `POST /api/export-report`
+
+**Purpose:** Generate a downloadable/printable Markdown report for the transformation.
+
+**Request:** Same as `/api/transform`
+```json
+{ 
+  "text": "Complex academic text...", 
+  "target_level": "middle_school", 
+  "api_key": "sk-ant-..." 
+}
+```
+
+**Response:** Plain text (Markdown format) with MIME type `text/markdown`
+```markdown
+# Accessibility Adaptation Report
+
+## Reading Level Metrics
+This simplified text reduces reading difficulty by **7.1 grade levels**...
+
+## Structural Changes
+### Sentence Structure
+- **Sentence Count:** 8 → 12 (+4 additional chunks)
+- **Average Sentence Length:** 25.1 → 9.1 words
+  - Sentences reduced by **64%**, improving scanability.
+...
+
+## Teacher Notes & Recommendations
+This is a **substantial reduction** in difficulty. Appropriate for students 2-3 grade levels below their peers...
+```
+
+**Usage:**
+```bash
+# Get and save report
+curl -X POST http://localhost:8000/api/export-report \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Your text here...",
+    "target_level": "elementary"
+  }' > report.md
+
+# View in terminal
+cat report.md
+
+# View in browser/editor
+open report.md
 ```
 
 ---
@@ -447,7 +664,9 @@ Reading-Dificulty-Transformer/
 │   ├── core/
 │   │   ├── config.py             # Pydantic settings
 │   │   ├── readability.py        # detect_readability() — focused 4-formula grade snapshot
-│   │   ├── semantic_similarity.py  # semantic_preservation_score() — sklearn-based cosine similarity
+│   │   ├── keyword_extractor.py  # extract_keywords(), count_preserved_keywords() — spaCy + NLTK
+│   │   ├── semantic_similarity.py  # semantic_preservation_score(), compute_semantic_similarity() — sentence embeddings
+│   │   ├── report_generator.py   # generate_teacher_report() — Markdown accessibility reports
 │   │   ├── instructional_scoring.py # instructional_suitability_score() — classroom accessibility evaluation
 │   │   └── differentiation_metadata.py # generate_differentiation_metadata() — teacher-friendly change summary
 │   ├── models/
@@ -558,11 +777,15 @@ python3 -m pytest tests/ -v
 
 ## Roadmap
 
+- [x] **Keyword extraction & preservation tracking** ✅ (Part 1-2, v0.2.0)
+- [x] **Semantic similarity scoring** ✅ (Actual computation, Part 3, v0.2.0)
+- [x] **Teacher report generation** ✅ (Markdown format, Part 5, v0.2.0)
+- [x] **Export report endpoint** ✅ (Part 6, v0.2.0)
+- [ ] Export reports (PDF/HTML) — currently Markdown
 - [ ] PDF / DOCX file upload support
 - [ ] Batch analysis (multiple texts)
 - [ ] Side-by-side diff view (original vs. simplified)
 - [ ] Reading level history & trends
-- [ ] Export reports (PDF)
 - [ ] Analytics dashboard (documents simplified, avg grade reduction)
 - [ ] Multi-language support
 - [ ] Browser extension
