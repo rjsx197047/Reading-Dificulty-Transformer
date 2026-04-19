@@ -111,6 +111,27 @@ class TransformResult(BaseModel):
     )
 
 
+class ExportReportRequest(BaseModel):
+    """Request to generate and export a teacher report from pre-computed pipeline output."""
+
+    original_text: str = Field(..., description="Original text before transformation")
+    transformed_text: str = Field(..., description="Transformed/simplified text")
+    original_grade: float = Field(..., description="Original text grade level")
+    new_grade: float = Field(..., description="Transformed text grade level")
+    semantic_score: float | None = Field(
+        None, description="Semantic similarity score (0-1)"
+    )
+    preserved_keywords: list[str] = Field(
+        default_factory=list, description="Keywords preserved in transformation"
+    )
+    original_keywords: list[str] = Field(
+        default_factory=list, description="Keywords extracted from original"
+    )
+    differentiation_metadata: dict = Field(
+        ..., description="Differentiation metadata dict from generate_differentiation_metadata()"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase 1 / 2 — Enhanced simplification pipeline
 # ---------------------------------------------------------------------------

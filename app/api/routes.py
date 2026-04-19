@@ -15,6 +15,7 @@ from app.core.semantic_similarity import compute_semantic_similarity
 from app.core.semantic_similarity import semantic_preservation_score
 from app.models.schemas import (
     AnalysisResult,
+    ExportReportRequest,
     HealthResponse,
     ReadabilityDetectionResult,
     SimplifyRequest,
@@ -375,42 +376,68 @@ async def transform(request: TransformRequest):
 
 
 @router.post("/export-report", response_class=PlainTextResponse)
-async def export_report(request: TransformRequest):
+async def export_report(request: ExportReportRequest):
     """
     Generate and export a teacher-friendly accessibility report as Markdown.
 
-    Takes the same input as /transform (text + target_level + optional api_key)
-    and returns a Markdown-formatted report suitable for printing or sharing
-    with teachers, administrators, or parents.
+    Accepts pre-computed transformation pipeline output (from /transform endpoint
+    or any transform result) and generates a downloadable Markdown report without
+    recomputing the pipeline.
 
-    Response headers include Content-Disposition for direct file download.
+    This is useful for:
+    - Exporting reports from previously computed results
+    - Batch report generation from stored pipeline outputs
+    - Avoiding redundant computation
+
+    Request body should contain:
+    - original_text, transformed_text (the texts before/after)
+    - original_grade, new_grade (readability scores)
+    - semantic_score (optional, float 0-1)
+    - preserved_keywords, original_keywords (lists)
+    - differentiation_metadata (dict from generate_differentiation_metadata)
 
     Returns:
-        Plain text (Markdown) report with text/markdown MIME type.
+        Plain text (Markdown) report with text/markdown MIME type and download headers.
+
+    Example:
+        curl -X POST http://localhost:8000/api/export-report \\
+          -H "Content-Type: application/json" \\
+          -d '{ "original_text": "...", "transformed_text": "...", ... }' \\
+          -o report.md
     """
-    text = request.text.strip()
-    target = request.target_level.lower()
-
-    valid_levels = ["elementary", "middle_school", "high_school", "college"]
-    if target not in valid_levels:
+    # Validate required fields
+    if not request.original_text or not request.original_text.strip():
         raise HTTPException(
-            status_code=422,
-            detail=f"Invalid target_level. Must be one of: {', '.join(valid_levels)}",
+            status_code=422, detail="original_text cannot be empty"
+        )
+    if not request.transformed_text or not request.transformed_text.strip():
+        raise HTTPException(
+            status_code=422, detail="transformed_text cannot be empty"
+        )
+    if not request.differentiation_metadata:
+        raise HTTPException(
+            status_code=422, detail="differentiation_metadata is required"
         )
 
-    use_claude = _should_use_claude(request.api_key)
-    if not use_claude and not await is_ollama_available():
-        raise HTTPException(
-            status_code=503,
-            detail="No AI backend available. Start Ollama or provide a Claude API key.",
-        )
+    # Generate report from pre-computed metadata (no pipeline computation)
+    teacher_report = generate_teacher_report(
+        metadata=request.differentiation_metadata,
+        original_keywords=request.original_keywords,
+        preserved_keywords=request.preserved_keywords,
+    )
 
-    # Run full pipeline with iterative grade correction
-    result = await _run_transform_pipeline(text, target, request.api_key)
+    logger.info(
+        "Generated report from pre-computed pipeline output: "
+        "grade %.1f→%.1f, semantic=%.3f, keywords=%d",
+        request.original_grade,
+        request.new_grade,
+        request.semantic_score or 0.0,
+        len(request.preserved_keywords),
+    )
 
     # Return Markdown file with download headers
     return PlainTextResponse(
-        content=result["teacher_report"],
+        content=teacher_report,
         media_type="text/markdown",
         headers={
             "Content-Disposition": 'attachment; filename="accessibility-report.md"'
