@@ -1,6 +1,9 @@
 """FastAPI route handlers."""
 
+import logging
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 
 from app.core.config import settings
 from app.core.differentiation_metadata import generate_differentiation_metadata
@@ -53,6 +56,8 @@ from app.services.simplifier import (
     extract_keywords,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 # Tolerance for the readability verification loop (±grade levels)
@@ -60,10 +65,187 @@ _GRADE_TOLERANCE = 0.5
 # Maximum rewrite attempts in the verification loop
 _MAX_RETRIES = 3
 
+# Target level to approximate grade-level mapping (midpoint of range)
+# Used by /transform for iterative grade calibration
+_TARGET_LEVEL_TO_GRADE = {
+    "elementary": 4.0,      # 3rd–5th grade midpoint
+    "middle_school": 7.0,   # 6th–8th grade midpoint
+    "high_school": 10.5,    # 9th–12th grade midpoint
+    "college": 14.0,        # college midpoint
+}
+
+# Tolerance for /transform grade correction loop (looser than /simplify)
+_TRANSFORM_GRADE_TOLERANCE = 2.0
+_TRANSFORM_MAX_PASSES = 3
+
 
 def _should_use_claude(api_key: str | None) -> bool:
     """Return True if a well-formed Claude API key was supplied."""
     return is_valid_api_key_format(api_key)
+
+
+async def _run_transform_pipeline(
+    text: str,
+    target: str,
+    api_key: str | None,
+) -> dict:
+    """
+    Run the complete transform pipeline with iterative grade calibration.
+
+    Shared between /transform and /export-report to avoid code duplication.
+
+    Pipeline steps:
+      1. Detect original readability & keywords
+      2. Iterative rewrite loop (max 3 passes):
+         - Transform text via LLM
+         - Detect new readability
+         - If within tolerance of target grade, stop
+         - Otherwise retry with adjusted aggressiveness
+      3. Compute semantic similarity
+      4. Check keyword preservation
+      5. Generate differentiation metadata & teacher report
+
+    Returns:
+        dict with all pipeline outputs ready for response construction.
+    """
+    use_claude = _should_use_claude(api_key)
+
+    # Step 1: Detect readability BEFORE
+    original_scores = compute_readability_scores(text)
+    original_grade = original_scores.flesch_kincaid_grade
+    original_level = classify_difficulty(original_scores).level
+
+    # Step 2: Extract keywords from original
+    original_keywords = extract_keywords_util(text)
+
+    # Look up numeric target grade for calibration
+    target_grade_numeric = _TARGET_LEVEL_TO_GRADE.get(target, 7.0)
+
+    # Step 3: Iterative transformation loop with grade correction
+    transformed = None
+    new_grade = None
+    current_target_level = target
+
+    for attempt in range(_TRANSFORM_MAX_PASSES):
+        logger.info(
+            "Transform pass %d/%d: target=%s, target_grade=%.1f",
+            attempt + 1,
+            _TRANSFORM_MAX_PASSES,
+            current_target_level,
+            target_grade_numeric,
+        )
+
+        # Transform text via LLM
+        if use_claude:
+            candidate = await transform_text_claude(text, current_target_level, api_key)
+            if not candidate:
+                raise HTTPException(status_code=500, detail="Claude API call failed.")
+        else:
+            candidate = await transform_text(text, current_target_level)
+            if not candidate:
+                raise HTTPException(
+                    status_code=500, detail="Failed to transform text via Ollama."
+                )
+
+        # Detect new readability
+        candidate_scores = compute_readability_scores(candidate)
+        candidate_grade = candidate_scores.flesch_kincaid_grade
+
+        logger.info(
+            "Pass %d result: achieved grade %.2f (target %.1f, diff %.2f)",
+            attempt + 1,
+            candidate_grade,
+            target_grade_numeric,
+            abs(candidate_grade - target_grade_numeric),
+        )
+
+        # Accept this result
+        transformed = candidate
+        new_grade = candidate_grade
+
+        # Check tolerance — stop if close enough
+        if abs(candidate_grade - target_grade_numeric) <= _TRANSFORM_GRADE_TOLERANCE:
+            logger.info("Pass %d within tolerance — stopping", attempt + 1)
+            break
+
+        # Adjust for next pass: if text is too complex, push simpler; if too simple, push harder
+        if candidate_grade > target_grade_numeric + _TRANSFORM_GRADE_TOLERANCE:
+            # Text is too hard — simplify more aggressively by targeting one level lower
+            if target == "elementary":
+                current_target_level = "elementary"  # Already lowest
+            elif target == "middle_school":
+                current_target_level = "elementary"
+            elif target == "high_school":
+                current_target_level = "middle_school"
+            elif target == "college":
+                current_target_level = "high_school"
+            logger.info("Grade too high, dropping target to %s for next pass", current_target_level)
+        elif candidate_grade < target_grade_numeric - _TRANSFORM_GRADE_TOLERANCE:
+            # Text is too easy — push harder
+            if target == "elementary":
+                current_target_level = "middle_school"
+            elif target == "middle_school":
+                current_target_level = "high_school"
+            elif target == "high_school":
+                current_target_level = "college"
+            else:
+                current_target_level = "college"  # Already highest
+            logger.info("Grade too low, raising target to %s for next pass", current_target_level)
+
+    if transformed is None:
+        raise HTTPException(status_code=500, detail="Transform pipeline failed to produce output.")
+
+    # Step 4: Compute semantic similarity (actual embedding-based computation)
+    computed_similarity = compute_semantic_similarity(text, transformed)
+    # Use actual score if available; only fall back to 0.5 if model is unavailable
+    if computed_similarity is not None:
+        semantic_score = computed_similarity
+        semantic_score_was_computed = True
+    else:
+        semantic_score = 0.5
+        semantic_score_was_computed = False
+        logger.warning("Semantic similarity model unavailable — using neutral fallback 0.5")
+
+    # Step 5: Check keyword preservation
+    preserved_keywords = count_preserved_keywords(original_keywords, transformed)
+
+    # Step 6: Detect readability for metadata
+    readability_before = detect_readability(text)
+    readability_after = detect_readability(transformed)
+
+    readability_before_dict = {"average_grade": readability_before.average_grade}
+    readability_after_dict = {"average_grade": readability_after.average_grade}
+
+    # Step 7: Generate differentiation metadata
+    differentiation_metadata = generate_differentiation_metadata(
+        original_text=text,
+        simplified_text=transformed,
+        readability_before=readability_before_dict,
+        readability_after=readability_after_dict,
+        semantic_score=semantic_score,
+        keywords_preserved=preserved_keywords,
+    )
+
+    # Step 8: Generate teacher report
+    teacher_report = generate_teacher_report(
+        metadata=differentiation_metadata,
+        original_keywords=original_keywords,
+        preserved_keywords=preserved_keywords,
+    )
+
+    return {
+        "original_text": text,
+        "transformed_text": transformed,
+        "original_level": original_level,
+        "target_level": target,
+        "original_grade": original_grade,
+        "new_grade": new_grade,
+        "semantic_score": semantic_score if semantic_score_was_computed else None,
+        "original_keywords": original_keywords,
+        "preserved_keywords": preserved_keywords,
+        "differentiation_metadata": differentiation_metadata,
+        "teacher_report": teacher_report,
+    }
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -138,18 +320,18 @@ async def analyze(input_data: TextInput):
 @router.post("/transform", response_model=TransformResult)
 async def transform(request: TransformRequest):
     """
-    Transform text to a target reading level.
+    Transform text to a target reading level with iterative grade calibration.
 
     Uses Claude if an API key is supplied; otherwise falls back to Ollama.
-    Complete pipeline:
+
+    Pipeline:
       1. Detect original readability
       2. Extract keywords from original
-      3. Transform text via LLM
-      4. Detect new readability
-      5. Compute semantic similarity
-      6. Check keyword preservation
-      7. Generate differentiation metadata
-      8. Generate teacher report
+      3. Iterative rewrite loop (max 3 passes, ±2.0 grade tolerance)
+      4. Compute semantic similarity (real embedding-based score)
+      5. Check keyword preservation
+      6. Generate differentiation metadata
+      7. Generate teacher report
 
     Returns comprehensive metadata and analysis for teacher-friendly assessment.
     """
@@ -170,90 +352,42 @@ async def transform(request: TransformRequest):
             detail="No AI backend available. Start Ollama or provide a Claude API key.",
         )
 
-    # Step 1: Detect readability BEFORE
-    original_scores = compute_readability_scores(text)
-    original_grade = original_scores.flesch_kincaid_grade
-    original_level = classify_difficulty(original_scores).level
-
-    # Step 2: Extract keywords from original
-    original_keywords = extract_keywords_util(text)
-
-    # Step 3: Transform text via LLM
-    if use_claude:
-        transformed = await transform_text_claude(text, target, request.api_key)
-        if not transformed:
-            raise HTTPException(status_code=500, detail="Claude API call failed.")
-    else:
-        transformed = await transform_text(text, target)
-        if not transformed:
-            raise HTTPException(status_code=500, detail="Failed to transform text via Ollama.")
-
-    # Step 4: Detect readability AFTER
-    new_scores = compute_readability_scores(transformed)
-    new_grade = new_scores.flesch_kincaid_grade
-
-    # Step 5: Compute semantic similarity (actual computation, not hardcoded)
-    semantic_score = compute_semantic_similarity(text, transformed) or 0.5
-
-    # Step 6: Check keyword preservation
-    preserved_keywords = count_preserved_keywords(original_keywords, transformed)
-
-    # Step 7: Detect readability for metadata
-    readability_before = detect_readability(text)
-    readability_after = detect_readability(transformed)
-
-    # Convert readability detection to dict format for metadata generator
-    readability_before_dict = {
-        "average_grade": readability_before.average_grade,
-    }
-    readability_after_dict = {
-        "average_grade": readability_after.average_grade,
-    }
-
-    # Generate differentiation metadata with actual semantic score and preserved keywords
-    differentiation_metadata = generate_differentiation_metadata(
-        original_text=text,
-        simplified_text=transformed,
-        readability_before=readability_before_dict,
-        readability_after=readability_after_dict,
-        semantic_score=semantic_score,
-        keywords_preserved=preserved_keywords,
-    )
-
-    # Step 8: Generate teacher report
-    teacher_report = generate_teacher_report(
-        metadata=differentiation_metadata,
-        original_keywords=original_keywords,
-        preserved_keywords=preserved_keywords,
-    )
+    # Run full pipeline with iterative grade correction
+    result = await _run_transform_pipeline(text, target, request.api_key)
 
     return TransformResult(
-        original_text=text,
-        transformed_text=transformed,
-        original_level=original_level,
-        target_level=target,
-        original_grade=round(original_grade, 2),
-        new_grade=round(new_grade, 2),
-        semantic_score=round(semantic_score, 4) if semantic_score else None,
-        original_keywords=original_keywords,
-        preserved_keywords=preserved_keywords,
-        differentiation_metadata=differentiation_metadata,
-        teacher_report=teacher_report,
+        original_text=result["original_text"],
+        transformed_text=result["transformed_text"],
+        original_level=result["original_level"],
+        target_level=result["target_level"],
+        original_grade=round(result["original_grade"], 2),
+        new_grade=round(result["new_grade"], 2),
+        semantic_score=(
+            round(result["semantic_score"], 4)
+            if result["semantic_score"] is not None
+            else None
+        ),
+        original_keywords=result["original_keywords"],
+        preserved_keywords=result["preserved_keywords"],
+        differentiation_metadata=result["differentiation_metadata"],
+        teacher_report=result["teacher_report"],
     )
 
 
-@router.post("/export-report")
+@router.post("/export-report", response_class=PlainTextResponse)
 async def export_report(request: TransformRequest):
     """
-    Generate and export a teacher-friendly accessibility report.
+    Generate and export a teacher-friendly accessibility report as Markdown.
 
-    Takes the same input as /transform and returns a Markdown-formatted
-    report suitable for printing or sharing with teachers and administrators.
+    Takes the same input as /transform (text + target_level + optional api_key)
+    and returns a Markdown-formatted report suitable for printing or sharing
+    with teachers, administrators, or parents.
+
+    Response headers include Content-Disposition for direct file download.
 
     Returns:
-        Plain text (Markdown) report
+        Plain text (Markdown) report with text/markdown MIME type.
     """
-    # Re-use the transform logic to get all metrics
     text = request.text.strip()
     target = request.target_level.lower()
 
@@ -271,68 +405,16 @@ async def export_report(request: TransformRequest):
             detail="No AI backend available. Start Ollama or provide a Claude API key.",
         )
 
-    # Step 1: Detect readability BEFORE
-    original_scores = compute_readability_scores(text)
-    original_grade = original_scores.flesch_kincaid_grade
+    # Run full pipeline with iterative grade correction
+    result = await _run_transform_pipeline(text, target, request.api_key)
 
-    # Step 2: Extract keywords from original
-    original_keywords = extract_keywords_util(text)
-
-    # Step 3: Transform text via LLM
-    if use_claude:
-        transformed = await transform_text_claude(text, target, request.api_key)
-        if not transformed:
-            raise HTTPException(status_code=500, detail="Claude API call failed.")
-    else:
-        transformed = await transform_text(text, target)
-        if not transformed:
-            raise HTTPException(status_code=500, detail="Failed to transform text via Ollama.")
-
-    # Step 4: Detect readability AFTER
-    new_scores = compute_readability_scores(transformed)
-    new_grade = new_scores.flesch_kincaid_grade
-
-    # Step 5: Compute semantic similarity
-    semantic_score = compute_semantic_similarity(text, transformed) or 0.5
-
-    # Step 6: Check keyword preservation
-    preserved_keywords = count_preserved_keywords(original_keywords, transformed)
-
-    # Step 7: Detect readability for metadata
-    readability_before = detect_readability(text)
-    readability_after = detect_readability(transformed)
-
-    # Convert readability detection to dict format
-    readability_before_dict = {
-        "average_grade": readability_before.average_grade,
-    }
-    readability_after_dict = {
-        "average_grade": readability_after.average_grade,
-    }
-
-    # Generate differentiation metadata
-    differentiation_metadata = generate_differentiation_metadata(
-        original_text=text,
-        simplified_text=transformed,
-        readability_before=readability_before_dict,
-        readability_after=readability_after_dict,
-        semantic_score=semantic_score,
-        keywords_preserved=preserved_keywords,
-    )
-
-    # Step 8: Generate teacher report
-    teacher_report = generate_teacher_report(
-        metadata=differentiation_metadata,
-        original_keywords=original_keywords,
-        preserved_keywords=preserved_keywords,
-    )
-
-    # Return plain text with markdown MIME type
-    from fastapi.responses import PlainTextResponse
-
+    # Return Markdown file with download headers
     return PlainTextResponse(
-        content=teacher_report,
+        content=result["teacher_report"],
         media_type="text/markdown",
+        headers={
+            "Content-Disposition": 'attachment; filename="accessibility-report.md"'
+        },
     )
 
 
