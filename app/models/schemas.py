@@ -90,7 +90,25 @@ class TransformResult(BaseModel):
     target_level: str
     original_grade: float
     new_grade: float
-    differentiation_metadata: dict | None = None  # Teacher-friendly metadata explaining changes
+
+    # Enhanced analytics fields
+    semantic_score: float | None = Field(
+        None, description="Semantic similarity (0-1) between original and transformed text"
+    )
+    original_keywords: list[str] = Field(
+        default_factory=list, description="Keywords extracted from original text"
+    )
+    preserved_keywords: list[str] = Field(
+        default_factory=list, description="Keywords that were preserved in transformed text"
+    )
+    teacher_report: str | None = Field(
+        None, description="Markdown-formatted accessibility report for teachers"
+    )
+
+    # Legacy field
+    differentiation_metadata: dict | None = Field(
+        None, description="Teacher-friendly metadata explaining changes"
+    )
 
 
 # ---------------------------------------------------------------------------

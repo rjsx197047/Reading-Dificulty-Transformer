@@ -131,6 +131,44 @@ def semantic_preservation_score(
         return None
 
 
+def compute_semantic_similarity(
+    original_text: str,
+    transformed_text: str,
+) -> float | None:
+    """
+    Compute semantic similarity between original and transformed text.
+
+    Public wrapper around semantic_preservation_score() for use in transform
+    and other endpoints. Measures meaning preservation using sentence embeddings
+    and cosine similarity.
+
+    Parameters
+    ----------
+    original_text : str
+        The source text before transformation.
+    transformed_text : str
+        The text after transformation or simplification.
+
+    Returns
+    -------
+    float | None
+        A similarity score in [0.0, 1.0] where:
+          * 1.0 = identical or nearly identical meaning
+          * 0.5 = moderate semantic overlap
+          * 0.0 = unrelated meaning
+        Returns None if the embeddings model is unavailable.
+
+    Examples
+    --------
+    >>> score = compute_semantic_similarity(
+    ...     "Photosynthesis converts solar energy into chemical energy.",
+    ...     "Plants turn sunlight into food."
+    ... )
+    >>> print(f"Semantic similarity: {score}")  # e.g., 0.82
+    """
+    return semantic_preservation_score(original_text, transformed_text)
+
+
 def is_available() -> bool:
     """Return True if the semantic scoring model is loaded and usable."""
     _load_model()
