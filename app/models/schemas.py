@@ -338,3 +338,94 @@ class DocumentTransformResult(BaseModel):
         None,
         description="Markdown-formatted document-level accessibility report for teachers",
     )
+
+
+# ---------------------------------------------------------------------------
+# Unified Transform Response (Backend/Frontend Contract)
+# ---------------------------------------------------------------------------
+
+
+class UnifiedTransformResult(BaseModel):
+    """
+    Unified response from /api/transform endpoint.
+
+    Always includes backward compatibility fields (original_text, transformed_text, etc.)
+    PLUS document/paragraph-level fields when applicable.
+
+    This ensures:
+    - Old frontend code expecting string fields doesn't break
+    - New frontend code can access paragraph and document metrics
+    - Single-paragraph and multi-paragraph modes use same response structure
+    """
+
+    # ─────────────────────────────────────────────────────────────────────
+    # BACKWARD COMPATIBILITY FIELDS (Always present, never null)
+    # ─────────────────────────────────────────────────────────────────────
+
+    original_text: str = Field(
+        ..., description="Original input text (single or joined from paragraphs)"
+    )
+    transformed_text: str = Field(
+        ...,
+        description="Transformed output text (single paragraph or joined from all paragraphs with \\n\\n)",
+    )
+    original_level: str = Field(
+        ...,
+        description="Difficulty level of original text: Elementary, Middle School, High School, College, Graduate",
+    )
+    target_level: str = Field(
+        ..., description="Target level requested: elementary, middle_school, high_school, college"
+    )
+    original_grade: float = Field(
+        ..., description="Original text grade level (single paragraph or average)"
+    )
+    new_grade: float = Field(
+        ..., description="Transformed text grade level (single paragraph or average)"
+    )
+    semantic_score: float | None = Field(
+        None, description="Semantic preservation score 0-1 (single paragraph or average)"
+    )
+    original_keywords: list[str] = Field(
+        default_factory=list, description="Keywords extracted from original text"
+    )
+    preserved_keywords: list[str] = Field(
+        default_factory=list, description="Keywords preserved in transformed text"
+    )
+    teacher_report: str | None = Field(
+        None,
+        description="Markdown-formatted accessibility report (single or document-level)",
+    )
+
+    # Reliability assessment fields (single paragraph or document-level)
+    semantic_status: str | None = Field(
+        None, description="Semantic preservation status"
+    )
+    terminology_status: str | None = Field(
+        None, description="Keyword retention status"
+    )
+    grade_alignment_status: str | None = Field(
+        None, description="Grade targeting status"
+    )
+    reliability_status: str | None = Field(
+        None, description="Overall reliability for classroom use"
+    )
+    reliability_warnings: list[str] = Field(
+        default_factory=list, description="Warnings if metrics below thresholds"
+    )
+
+    differentiation_metadata: dict | None = Field(
+        None, description="Teacher-friendly metadata explaining changes"
+    )
+
+    # ─────────────────────────────────────────────────────────────────────
+    # MULTI-PARAGRAPH FIELDS (Optional, present only if input had paragraphs)
+    # ─────────────────────────────────────────────────────────────────────
+
+    paragraphs: list[ParagraphTransformResult] | None = Field(
+        None,
+        description="Per-paragraph results (only present if input had multiple paragraphs)",
+    )
+    document_metrics: DocumentMetrics | None = Field(
+        None,
+        description="Document-level aggregate metrics (only present if input had multiple paragraphs)",
+    )

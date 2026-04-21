@@ -52,7 +52,10 @@
       "Bash(curl -s -X POST http://127.0.0.1:8000/api/transform -H 'Content-Type: application/json' -d '{ *)",
       "Bash(pkill -f \"uvicorn app.main:app\")",
       "Bash(python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload)",
-      "Bash(curl -s -X POST http://127.0.0.1:8000/api/document-transform -H 'Content-Type: application/json' -d '{ *)"
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/document-transform -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(bash /tmp/demo_smart_transform.sh)",
+      "Bash(grep -v \"^$\")",
+      "Bash(find /Users/rohailsiddiqi/Documents/Reading -name \"*.pyc\" -delete)"
     ]
   }
 }

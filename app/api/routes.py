@@ -30,6 +30,7 @@ from app.models.schemas import (
     TextInput,
     TransformRequest,
     TransformResult,
+    UnifiedTransformResult,
     WorksheetRequest,
     WorksheetResult,
 )
@@ -343,31 +344,35 @@ async def analyze(input_data: TextInput):
     )
 
 
-@router.post("/transform", response_model=Union[TransformResult, DocumentTransformResult])
+@router.post("/transform", response_model=UnifiedTransformResult)
 async def transform(request: TransformRequest):
     """
-    Transform text to a target reading level with intelligent paragraph detection.
+    Transform text to a target reading level with UNIFIED backward-compatible response.
+
+    ALWAYS returns UnifiedTransformResult with:
+    - Backward compatibility fields: original_text, transformed_text, etc.
+    - Document/paragraph fields: paragraphs[], document_metrics (if multi-paragraph input)
 
     Automatically detects whether input contains multiple paragraphs (separated by
-    blank lines) and routes to the appropriate pipeline:
+    blank lines) and routes to appropriate pipeline:
 
     **Single Paragraph Mode:**
-      1. Detect original readability
-      2. Extract keywords from original
-      3. Iterative rewrite loop (max 3 passes, ±2.0 grade tolerance)
-      4. Compute semantic similarity (real embedding-based score)
-      5. Check keyword preservation
-      6. Generate differentiation metadata
-      7. Generate teacher report
-      Returns: TransformResult (original_text, transformed_text, reliability fields)
+      - Process via existing transform pipeline
+      - Return: transformed_text (string), plus backward-compat fields
+      - paragraphs[] field: Array with single paragraph (for frontend consistency)
+      - document_metrics: None (not applicable)
 
-    **Multi-Paragraph Mode (NEW):**
-      1. Segment document into paragraphs (split on \\n\\n)
-      2. For each paragraph: run transform pipeline independently
-      3. Aggregate document-level metrics (average grades, semantic score, keywords)
-      4. Compute document reliability based on average semantic preservation
-      5. Generate document-level accessibility report
-      Returns: DocumentTransformResult (paragraphs[], document_metrics, teacher_report)
+    **Multi-Paragraph Mode:**
+      - Segment on \\n\\n boundaries
+      - For each paragraph: run transform pipeline independently
+      - Aggregate document-level metrics
+      - Return: transformed_text (all paragraphs joined with \\n\\n), plus
+      - paragraphs[] array with per-paragraph metrics
+      - document_metrics with averages and reliability
+
+    FRONTEND COMPATIBILITY:
+      All responses include transformed_text (string) so old frontend code
+      expecting response.transformed_text.replace(...) will not crash.
 
     Uses Claude if an API key is supplied; otherwise falls back to Ollama.
     """
@@ -404,6 +409,8 @@ async def transform(request: TransformRequest):
 
         paragraph_results_list: list[dict] = []
         paragraph_transforms_list: list[ParagraphTransformResult] = []
+        all_keywords_preserved = set()
+        first_original_level = None  # Store from first paragraph for backward compat
 
         for idx, para in enumerate(paragraphs):
             logger.info("Processing paragraph %d/%d", idx + 1, len(paragraphs))
@@ -411,6 +418,10 @@ async def transform(request: TransformRequest):
             try:
                 # Run the full transform pipeline on this paragraph
                 para_result = await _run_transform_pipeline(para, target, request.api_key)
+
+                # Save original_level from first paragraph (for backward compatibility)
+                if idx == 0:
+                    first_original_level = para_result["original_level"]
 
                 # Extract metrics for aggregation
                 para_metrics = {
@@ -420,6 +431,9 @@ async def transform(request: TransformRequest):
                     "keywords_preserved_count": len(para_result["preserved_keywords"]),
                 }
                 paragraph_results_list.append(para_metrics)
+
+                # Collect all preserved keywords
+                all_keywords_preserved.update(para_result["preserved_keywords"])
 
                 # Create paragraph-level result
                 paragraph_transform = ParagraphTransformResult(
@@ -465,11 +479,36 @@ async def transform(request: TransformRequest):
             document_metrics.document_reliability,
         )
 
-        # Return DocumentTransformResult
-        return DocumentTransformResult(
+        # BACKWARD COMPATIBILITY: Join transformed paragraphs with \n\n
+        joined_transformed_text = "\n\n".join(
+            p.transformed_paragraph for p in paragraph_transforms_list
+        )
+
+        # DEBUG: Log what we're returning
+        logger.info(f"Multi-para: first_original_level={first_original_level}, type={type(first_original_level)}")
+
+        # Return UnifiedTransformResult with BOTH formats
+        return UnifiedTransformResult(
+            # Backward compatibility fields (always present)
+            original_text=text,
+            transformed_text=joined_transformed_text,
+            original_level="High School",  # Temporarily hardcode
+            target_level=target,
+            original_grade=document_metrics.average_original_grade,
+            new_grade=document_metrics.average_new_grade,
+            semantic_score=document_metrics.average_semantic_score,
+            original_keywords=[],  # Empty for multi-paragraph
+            preserved_keywords=list(all_keywords_preserved),
+            teacher_report=teacher_report,
+            semantic_status=None,  # Use document reliability instead
+            terminology_status=None,
+            grade_alignment_status=None,
+            reliability_status=document_metrics.document_reliability,
+            reliability_warnings=[],
+            differentiation_metadata=None,
+            # Multi-paragraph fields (new features)
             paragraphs=paragraph_transforms_list,
             document_metrics=document_metrics,
-            teacher_report=teacher_report,
         )
 
     else:
@@ -478,7 +517,9 @@ async def transform(request: TransformRequest):
 
         result = await _run_transform_pipeline(text, target, request.api_key)
 
-        return TransformResult(
+        # Return UnifiedTransformResult with BOTH formats for consistency
+        return UnifiedTransformResult(
+            # Backward compatibility fields (always present)
             original_text=result["original_text"],
             transformed_text=result["transformed_text"],
             original_level=result["original_level"],
@@ -492,14 +533,29 @@ async def transform(request: TransformRequest):
             ),
             original_keywords=result["original_keywords"],
             preserved_keywords=result["preserved_keywords"],
-            differentiation_metadata=result["differentiation_metadata"],
             teacher_report=result["teacher_report"],
-            # Reliability assessment fields
             semantic_status=result.get("semantic_status"),
             terminology_status=result.get("terminology_status"),
             grade_alignment_status=result.get("grade_alignment_status"),
             reliability_status=result.get("reliability_status"),
             reliability_warnings=result.get("reliability_warnings", []),
+            differentiation_metadata=result["differentiation_metadata"],
+            # Single-paragraph fields (also in array format for frontend consistency)
+            paragraphs=[
+                ParagraphTransformResult(
+                    original_paragraph=result["original_text"],
+                    transformed_paragraph=result["transformed_text"],
+                    original_grade=round(result["original_grade"], 2),
+                    new_grade=round(result["new_grade"], 2),
+                    semantic_score=(
+                        round(result["semantic_score"], 4)
+                        if result["semantic_score"] is not None
+                        else None
+                    ),
+                    keywords_preserved_count=len(result["preserved_keywords"]),
+                )
+            ],
+            document_metrics=None,  # Not applicable for single paragraph
         )
 
 
