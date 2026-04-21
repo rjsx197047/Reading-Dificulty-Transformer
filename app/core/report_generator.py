@@ -399,3 +399,156 @@ def _build_teacher_notes_section(grade_reduction: float, semantic_score: float) 
     )
 
     return "\n".join(sections)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Document-level Report Generation
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def generate_document_report(
+    document_metrics: dict,
+    paragraph_count: int,
+) -> str:
+    """
+    Generate a Markdown-formatted document-level accessibility report.
+
+    Provides summary of multi-paragraph document transformation with
+    aggregate metrics and document-level reliability assessment.
+
+    Args:
+        document_metrics (dict): Aggregate metrics from compute_document_metrics().
+            Expected keys:
+            - average_original_grade (float)
+            - average_new_grade (float)
+            - average_semantic_score (float | None)
+            - total_keywords_preserved (int)
+            - document_reliability (str)
+            - paragraphs_processed (int)
+        paragraph_count (int): Total number of paragraphs in document
+
+    Returns:
+        str: Markdown-formatted document report
+    """
+    if not document_metrics:
+        return "# Document-Level Accessibility Report\n\nNo metrics available.\n"
+
+    average_original_grade = document_metrics.get("average_original_grade", 0.0)
+    average_new_grade = document_metrics.get("average_new_grade", 0.0)
+    average_semantic_score = document_metrics.get("average_semantic_score")
+    total_keywords_preserved = document_metrics.get("total_keywords_preserved", 0)
+    document_reliability = document_metrics.get("document_reliability", "Unknown")
+    paragraphs_processed = document_metrics.get("paragraphs_processed", 0)
+
+    grade_reduction = average_original_grade - average_new_grade
+
+    # Build report sections
+    sections = []
+
+    # Header
+    sections.append("# Document-Level Accessibility Report\n")
+
+    # Overview
+    sections.append("## Overview\n")
+    sections.append(
+        f"This document was processed as **{paragraphs_processed} paragraph(s)**. "
+        f"The following metrics represent aggregate values across the entire document.\n"
+    )
+
+    # Reading Level Summary
+    sections.append("## Reading Level Summary\n")
+    sections.append(
+        f"- **Original Average Grade Level:** {average_original_grade:.2f}\n"
+    )
+    sections.append(
+        f"- **Transformed Average Grade Level:** {average_new_grade:.2f}\n"
+    )
+    sections.append(
+        f"- **Average Reduction:** {grade_reduction:.2f} grade levels\n"
+    )
+
+    # Semantic Quality
+    sections.append("\n## Semantic Quality\n")
+    if average_semantic_score is not None:
+        semantic_pct = average_semantic_score * 100
+        sections.append(
+            f"**Average Meaning Preservation Score:** {semantic_pct:.0f}%\n"
+        )
+
+        if average_semantic_score >= 0.85:
+            assessment = (
+                "**Excellent preservation** — Simplified text retains nearly all original meaning "
+                "across paragraphs. Highly suitable for classroom use."
+            )
+        elif average_semantic_score >= 0.75:
+            assessment = (
+                "**Good preservation** — Most key concepts are retained across paragraphs. "
+                "Suitable for most classroom applications."
+            )
+        elif average_semantic_score >= 0.50:
+            assessment = (
+                "**Moderate preservation** — Some concepts were simplified. "
+                "Review text to ensure critical information is present."
+            )
+        else:
+            assessment = (
+                "**Limited preservation** — Significant meaning loss may have occurred. "
+                "Verify that core content aligns with learning objectives."
+            )
+
+        sections.append(f"- {assessment}\n")
+    else:
+        sections.append("Semantic similarity scoring unavailable.\n")
+
+    # Terminology
+    sections.append("## Terminology Preservation\n")
+    sections.append(
+        f"**{total_keywords_preserved} specialized term(s) preserved** across all paragraphs "
+        "to maintain domain-specific vocabulary.\n"
+    )
+
+    # Document Reliability
+    sections.append("## Document Reliability Assessment\n")
+    sections.append(f"**Overall Status:** {document_reliability}\n")
+
+    if document_reliability == "High":
+        reliability_text = (
+            "This document is **recommended for classroom use**. "
+            "Semantic meaning is well preserved, and target grade level is achieved across paragraphs."
+        )
+    elif document_reliability == "Moderate":
+        reliability_text = (
+            "This document is **generally suitable for classroom use**, but review before deploying. "
+            "Some paragraphs may need closer inspection for content integrity."
+        )
+    else:  # Review Recommended
+        reliability_text = (
+            "This document **requires teacher review** before classroom use. "
+            "One or more paragraphs have reliability metrics below recommended thresholds."
+        )
+
+    sections.append(f"\n{reliability_text}\n")
+
+    # Recommendations
+    sections.append("## Teacher Recommendations\n")
+    sections.append(
+        "- Review the paragraph-level transformation results to identify any paragraphs "
+        "requiring additional editing.\n"
+    )
+    sections.append(
+        "- Check that domain-specific terminology is correctly preserved.\n"
+    )
+    sections.append(
+        "- Consider supplementing with visual aids or discussion for paragraphs with lower semantic scores.\n"
+    )
+    sections.append(
+        "- Verify that the overall document maintains coherence and logical flow after transformation.\n"
+    )
+
+    sections.append("\n---\n")
+    sections.append(
+        "*Document report generated by Reading Difficulty Transformer. "
+        "For accessibility best practices, see the full documentation.*"
+    )
+
+    return "\n".join(sections)

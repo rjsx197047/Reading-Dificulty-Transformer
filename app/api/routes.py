@@ -7,17 +7,22 @@ from fastapi.responses import PlainTextResponse
 
 from app.core.config import settings
 from app.core.differentiation_metadata import generate_differentiation_metadata
+from app.core.document_transformer import compute_document_metrics, segment_paragraphs
 from app.core.keyword_extractor import extract_keywords as extract_keywords_util
 from app.core.keyword_extractor import count_preserved_keywords
 from app.core.readability import detect_readability
 from app.core.reliability_assessment import assess_reliability
-from app.core.report_generator import generate_teacher_report
+from app.core.report_generator import generate_document_report, generate_teacher_report
 from app.core.semantic_similarity import compute_semantic_similarity
 from app.core.semantic_similarity import semantic_preservation_score
 from app.models.schemas import (
     AnalysisResult,
+    DocumentMetrics,
+    DocumentTransformRequest,
+    DocumentTransformResult,
     ExportReportRequest,
     HealthResponse,
+    ParagraphTransformResult,
     ReadabilityDetectionResult,
     SimplifyRequest,
     SimplifyResult,
@@ -641,4 +646,125 @@ async def worksheet_versions(request: WorksheetRequest):
         advanced_grade=_grade(versions["advanced"]),
         standard_grade=_grade(versions["standard"]),
         simplified_grade=_grade(versions["simplified"]),
+    )
+
+
+@router.post("/document-transform", response_model=DocumentTransformResult)
+async def document_transform(request: DocumentTransformRequest):
+    """
+    Transform a multi-paragraph document to a target reading level.
+
+    Processes each paragraph independently through the full transform pipeline,
+    aggregates results with document-level metrics, and generates a comprehensive
+    accessibility report.
+
+    Pipeline:
+      1. Segment document into paragraphs (split on \\n\\n)
+      2. For each paragraph:
+         - Run transform pipeline (same as /transform endpoint)
+         - Extract original grade, new grade, semantic score, keywords
+      3. Aggregate metrics across all paragraphs
+      4. Compute document-level reliability (based on avg semantic score)
+      5. Generate document-level accessibility report
+      6. Return structured response with per-paragraph + aggregate results
+
+    Returns:
+        DocumentTransformResult with paragraphs list, document metrics, and report.
+    """
+    text = request.text.strip()
+    target = request.target_level.lower()
+
+    # Validate target level
+    valid_levels = ["elementary", "middle_school", "high_school", "college"]
+    if target not in valid_levels:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid target_level. Must be one of: {', '.join(valid_levels)}",
+        )
+
+    # Check AI backend availability
+    use_claude = _should_use_claude(request.api_key)
+    if not use_claude and not await is_ollama_available():
+        raise HTTPException(
+            status_code=503,
+            detail="No AI backend available. Start Ollama or provide a Claude API key.",
+        )
+
+    # Step 1: Segment document into paragraphs
+    try:
+        paragraphs = segment_paragraphs(text)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    logger.info("Processing %d paragraphs for document transformation", len(paragraphs))
+
+    # Step 2: Process each paragraph through transform pipeline
+    paragraph_results_list: list[dict] = []
+    paragraph_transforms_list: list[ParagraphTransformResult] = []
+
+    for idx, para in enumerate(paragraphs):
+        logger.info("Processing paragraph %d/%d", idx + 1, len(paragraphs))
+
+        try:
+            # Run the full transform pipeline on this paragraph
+            para_result = await _run_transform_pipeline(para, target, request.api_key)
+
+            # Extract metrics for aggregation
+            para_metrics = {
+                "original_grade": para_result["original_grade"],
+                "new_grade": para_result["new_grade"],
+                "semantic_score": para_result["semantic_score"],
+                "keywords_preserved_count": len(para_result["preserved_keywords"]),
+            }
+            paragraph_results_list.append(para_metrics)
+
+            # Create paragraph-level result
+            paragraph_transform = ParagraphTransformResult(
+                original_paragraph=para_result["original_text"],
+                transformed_paragraph=para_result["transformed_text"],
+                original_grade=round(para_result["original_grade"], 2),
+                new_grade=round(para_result["new_grade"], 2),
+                semantic_score=(
+                    round(para_result["semantic_score"], 4)
+                    if para_result["semantic_score"] is not None
+                    else None
+                ),
+                keywords_preserved_count=len(para_result["preserved_keywords"]),
+            )
+            paragraph_transforms_list.append(paragraph_transform)
+
+        except Exception as e:
+            logger.error("Failed to transform paragraph %d: %s", idx + 1, str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to transform paragraph {idx + 1}: {str(e)}",
+            )
+
+    # Step 3: Compute document-level metrics
+    document_metrics_dict = compute_document_metrics(paragraph_results_list)
+    document_metrics = DocumentMetrics(
+        average_original_grade=document_metrics_dict["average_original_grade"],
+        average_new_grade=document_metrics_dict["average_new_grade"],
+        average_semantic_score=document_metrics_dict["average_semantic_score"],
+        total_keywords_preserved=document_metrics_dict["total_keywords_preserved"],
+        document_reliability=document_metrics_dict["document_reliability"],
+        paragraphs_processed=document_metrics_dict["paragraphs_processed"],
+    )
+
+    # Step 4: Generate document-level report
+    teacher_report = generate_document_report(document_metrics_dict, len(paragraphs))
+
+    logger.info(
+        "Document transformation complete: %d paragraphs, avg_grade %.2f → %.2f, reliability=%s",
+        len(paragraphs),
+        document_metrics.average_original_grade,
+        document_metrics.average_new_grade,
+        document_metrics.document_reliability,
+    )
+
+    # Step 5: Return structured response
+    return DocumentTransformResult(
+        paragraphs=paragraph_transforms_list,
+        document_metrics=document_metrics,
+        teacher_report=teacher_report,
     )

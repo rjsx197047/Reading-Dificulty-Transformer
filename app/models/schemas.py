@@ -267,3 +267,74 @@ class HealthResponse(BaseModel):
     version: str
     ollama_available: bool
     semantic_scoring_available: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Document-level transformation — multi-paragraph support
+# ---------------------------------------------------------------------------
+
+
+class ParagraphTransformResult(BaseModel):
+    """Result for a single paragraph transformation."""
+
+    original_paragraph: str = Field(..., description="Original paragraph text")
+    transformed_paragraph: str = Field(..., description="Transformed/simplified paragraph text")
+    original_grade: float = Field(..., description="Original paragraph grade level")
+    new_grade: float = Field(..., description="Transformed paragraph grade level")
+    semantic_score: float | None = Field(
+        None, description="Semantic similarity (0-1) for this paragraph"
+    )
+    keywords_preserved_count: int = Field(
+        ..., description="Number of keywords preserved in this paragraph"
+    )
+
+
+class DocumentMetrics(BaseModel):
+    """Aggregate metrics across all paragraphs in a document."""
+
+    average_original_grade: float = Field(
+        ..., description="Average grade level across original paragraphs"
+    )
+    average_new_grade: float = Field(
+        ..., description="Average grade level across transformed paragraphs"
+    )
+    average_semantic_score: float | None = Field(
+        None, description="Average semantic preservation score across paragraphs"
+    )
+    total_keywords_preserved: int = Field(
+        ..., description="Total keywords preserved across all paragraphs"
+    )
+    document_reliability: str = Field(
+        ...,
+        description="Document-level reliability status: 'High', 'Moderate', or 'Review Recommended'",
+    )
+    paragraphs_processed: int = Field(..., description="Number of paragraphs processed")
+
+
+class DocumentTransformRequest(BaseModel):
+    """Request to transform multi-paragraph document to a target reading level."""
+
+    text: str = Field(..., min_length=1, description="The multi-paragraph document to transform")
+    target_level: str = Field(
+        ...,
+        description="Target level: elementary, middle_school, high_school, college",
+    )
+    api_key: str | None = Field(
+        None,
+        description="Optional Claude API key. When provided, uses Claude instead of Ollama.",
+    )
+
+
+class DocumentTransformResult(BaseModel):
+    """Complete result of transforming a multi-paragraph document."""
+
+    paragraphs: list[ParagraphTransformResult] = Field(
+        ..., description="Per-paragraph transformation results"
+    )
+    document_metrics: DocumentMetrics = Field(
+        ..., description="Aggregate metrics across all paragraphs"
+    )
+    teacher_report: str | None = Field(
+        None,
+        description="Markdown-formatted document-level accessibility report for teachers",
+    )
