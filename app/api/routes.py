@@ -10,6 +10,7 @@ from app.core.differentiation_metadata import generate_differentiation_metadata
 from app.core.keyword_extractor import extract_keywords as extract_keywords_util
 from app.core.keyword_extractor import count_preserved_keywords
 from app.core.readability import detect_readability
+from app.core.reliability_assessment import assess_reliability
 from app.core.report_generator import generate_teacher_report
 from app.core.semantic_similarity import compute_semantic_similarity
 from app.core.semantic_similarity import semantic_preservation_score
@@ -227,12 +228,24 @@ async def _run_transform_pipeline(
         keywords_preserved=preserved_keywords,
     )
 
-    # Step 8: Generate teacher report
-    teacher_report = generate_teacher_report(
+    # Step 8: Generate teacher report (now includes reliability assessment)
+    teacher_report, reliability_assessment = generate_teacher_report(
         metadata=differentiation_metadata,
         original_keywords=original_keywords,
         preserved_keywords=preserved_keywords,
+        target_grade=target_grade_numeric,
     )
+
+    # Step 9: Compute additional reliability scores if needed
+    # (generate_teacher_report computes them, but we also return them separately)
+    if semantic_score_was_computed is False:
+        reliability_assessment = assess_reliability(
+            semantic_score=None,
+            keywords_preserved_count=len(preserved_keywords),
+            new_grade=new_grade,
+            target_grade=target_grade_numeric,
+        )
+    # Otherwise reliability_assessment from generate_teacher_report is already computed
 
     return {
         "original_text": text,
@@ -246,6 +259,12 @@ async def _run_transform_pipeline(
         "preserved_keywords": preserved_keywords,
         "differentiation_metadata": differentiation_metadata,
         "teacher_report": teacher_report,
+        # Reliability assessment fields
+        "semantic_status": reliability_assessment.get("semantic_status"),
+        "terminology_status": reliability_assessment.get("terminology_status"),
+        "grade_alignment_status": reliability_assessment.get("grade_alignment_status"),
+        "reliability_status": reliability_assessment.get("reliability_status"),
+        "reliability_warnings": reliability_assessment.get("warnings", []),
     }
 
 
@@ -372,6 +391,12 @@ async def transform(request: TransformRequest):
         preserved_keywords=result["preserved_keywords"],
         differentiation_metadata=result["differentiation_metadata"],
         teacher_report=result["teacher_report"],
+        # Reliability assessment fields
+        semantic_status=result.get("semantic_status"),
+        terminology_status=result.get("terminology_status"),
+        grade_alignment_status=result.get("grade_alignment_status"),
+        reliability_status=result.get("reliability_status"),
+        reliability_warnings=result.get("reliability_warnings", []),
     )
 
 
@@ -420,19 +445,22 @@ async def export_report(request: ExportReportRequest):
         )
 
     # Generate report from pre-computed metadata (no pipeline computation)
-    teacher_report = generate_teacher_report(
+    # Pass target_grade for reliability assessment if available
+    teacher_report, reliability_assessment = generate_teacher_report(
         metadata=request.differentiation_metadata,
         original_keywords=request.original_keywords,
         preserved_keywords=request.preserved_keywords,
+        target_grade=request.target_grade,
     )
 
     logger.info(
         "Generated report from pre-computed pipeline output: "
-        "grade %.1f→%.1f, semantic=%.3f, keywords=%d",
+        "grade %.1f→%.1f, semantic=%.3f, keywords=%d, reliability=%s",
         request.original_grade,
         request.new_grade,
         request.semantic_score or 0.0,
         len(request.preserved_keywords),
+        reliability_assessment.get("reliability_status", "Unknown"),
     )
 
     # Return Markdown file with download headers

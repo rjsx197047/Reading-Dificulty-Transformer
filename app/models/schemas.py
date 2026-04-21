@@ -105,6 +105,23 @@ class TransformResult(BaseModel):
         None, description="Markdown-formatted accessibility report for teachers"
     )
 
+    # Reliability assessment fields
+    semantic_status: str | None = Field(
+        None, description="Semantic preservation status: 'High preservation', 'Moderate preservation', 'Low preservation', or 'Unavailable'"
+    )
+    terminology_status: str | None = Field(
+        None, description="Keyword retention status: 'Strong terminology retention', 'Moderate terminology retention', or 'Terminology loss risk'"
+    )
+    grade_alignment_status: str | None = Field(
+        None, description="Grade targeting status: 'Target level achieved' or 'Target level not achieved'"
+    )
+    reliability_status: str | None = Field(
+        None, description="Overall reliability for classroom use: 'High', 'Moderate', or 'Review Recommended'"
+    )
+    reliability_warnings: list[str] = Field(
+        default_factory=list, description="List of warnings if reliability metrics fail thresholds"
+    )
+
     # Legacy field
     differentiation_metadata: dict | None = Field(
         None, description="Teacher-friendly metadata explaining changes"
@@ -129,6 +146,9 @@ class ExportReportRequest(BaseModel):
     )
     differentiation_metadata: dict = Field(
         ..., description="Differentiation metadata dict from generate_differentiation_metadata()"
+    )
+    target_grade: float | None = Field(
+        None, description="Target grade for reliability assessment (optional)"
     )
 
 

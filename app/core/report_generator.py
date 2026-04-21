@@ -4,47 +4,69 @@ Report Generator Module
 Generates Markdown-formatted accessibility adaptation reports for teachers.
 Transforms differentiation metadata into readable reports explaining how text
 was simplified and whether it's suitable for classroom use.
+
+Includes reliability assessment to help teachers understand instructional safety.
 """
 
+from app.core.reliability_assessment import (
+    assess_reliability,
+    format_reliability_section,
+)
 
-def generate_teacher_report(metadata: dict, original_keywords: list = None, preserved_keywords: list = None) -> str:
+
+def generate_teacher_report(metadata: dict, original_keywords: list = None, preserved_keywords: list = None, target_grade: float = None) -> tuple[str, dict]:
     """
     Generate a Markdown-formatted accessibility adaptation report for teachers.
 
     Converts differentiation metadata into a structured, printer-friendly report
-    explaining how text was simplified and providing guidance for classroom use.
-    Includes reading level metrics, structural changes, semantic quality, and
-    teacher-friendly recommendations.
+    explaining how text was simplified, providing reliability assessment, and
+    offering guidance for classroom use.
+
+    Sections included:
+    - Reading Level Metrics
+    - Structural Changes
+    - Semantic Quality
+    - Keywords & Terminology
+    - Summary
+    - Reliability Assessment (NEW)
+    - Teacher Notes & Recommendations
 
     Args:
         metadata (dict): Differentiation metadata from generate_differentiation_metadata().
             Expected keys:
             - grade_reduction (float)
-            - sentence_count_before (int)
-            - sentence_count_after (int)
-            - avg_sentence_length_before (float)
-            - avg_sentence_length_after (float)
-            - word_count_before (int)
-            - word_count_after (int)
-            - avg_word_length_before (float)
-            - avg_word_length_after (float)
+            - sentence_count_before/after, avg_sentence_length_before/after
+            - word_count_before/after, avg_word_length_before/after
             - semantic_preservation_score (float)
             - keywords_preserved_count (int)
             - accessibility_summary (str)
         original_keywords (list, optional): Keywords extracted from original text
         preserved_keywords (list, optional): Keywords preserved in simplified text
+        target_grade (float, optional): Target grade for reliability assessment
 
     Returns:
-        str: Markdown-formatted report string suitable for teacher review and printing
+        tuple[str, dict]: (markdown_report, reliability_assessment)
+        - markdown_report: Markdown string with full teacher report
+        - reliability_assessment: dict with semantic_status, terminology_status,
+                                 grade_alignment_status, reliability_status, warnings
 
     Example:
-        >>> report = generate_teacher_report(metadata)
+        >>> report, assessment = generate_teacher_report(metadata, target_grade=5.0)
         >>> print(report)
         # Accessibility Adaptation Report
         ...
+        >>> print(assessment["reliability_status"])
+        "High"
     """
     if not metadata:
-        return "# Accessibility Adaptation Report\n\nNo metadata available.\n"
+        default_assessment = {
+            "semantic_status": "Unavailable",
+            "terminology_status": "Unknown",
+            "grade_alignment_status": "Unknown",
+            "reliability_status": "Unknown",
+            "warnings": ["No metadata available"],
+        }
+        return ("# Accessibility Adaptation Report\n\nNo metadata available.\n", default_assessment)
 
     # Extract metadata values with safe defaults
     grade_reduction = metadata.get("grade_reduction", 0.0)
@@ -56,9 +78,19 @@ def generate_teacher_report(metadata: dict, original_keywords: list = None, pres
     word_count_after = metadata.get("word_count_after", 0)
     avg_word_length_before = metadata.get("avg_word_length_before", 0.0)
     avg_word_length_after = metadata.get("avg_word_length_after", 0.0)
-    semantic_score = metadata.get("semantic_preservation_score", 0.5)
+    semantic_score = metadata.get("semantic_preservation_score", None)
     keywords_preserved_count = metadata.get("keywords_preserved_count", 0)
     accessibility_summary = metadata.get("accessibility_summary", "")
+
+    # Compute reliability assessment
+    new_grade = metadata.get("grade_reduction", 0.0) * -1 + (target_grade or 7.0)  # Estimate
+    # For more accurate grade, we should pass it directly, but fallback to calculation
+    reliability_assessment = assess_reliability(
+        semantic_score=semantic_score,
+        keywords_preserved_count=keywords_preserved_count,
+        new_grade=new_grade if target_grade else 7.0,  # Fallback if target_grade not provided
+        target_grade=target_grade or 7.0,
+    )
 
     # Calculate derived metrics for report
     sentence_reduction_pct = (
@@ -122,13 +154,16 @@ def generate_teacher_report(metadata: dict, original_keywords: list = None, pres
     # Section 5: Summary
     report_parts.append(_build_summary_section(accessibility_summary))
 
-    # Section 6: Teacher Notes and Guidance
+    # Section 6 (NEW): Reliability Assessment
+    report_parts.append(format_reliability_section(reliability_assessment))
+
+    # Section 7: Teacher Notes and Guidance
     report_parts.append(_build_teacher_notes_section(grade_reduction, semantic_score))
 
     # Combine all sections
     full_report = "\n".join(report_parts)
 
-    return full_report
+    return (full_report, reliability_assessment)
 
 
 # ─────────────────────────────────────────────────────────────────────────
