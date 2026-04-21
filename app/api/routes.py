@@ -1,6 +1,7 @@
 """FastAPI route handlers."""
 
 import logging
+from typing import Union
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -342,14 +343,15 @@ async def analyze(input_data: TextInput):
     )
 
 
-@router.post("/transform", response_model=TransformResult)
+@router.post("/transform", response_model=Union[TransformResult, DocumentTransformResult])
 async def transform(request: TransformRequest):
     """
-    Transform text to a target reading level with iterative grade calibration.
+    Transform text to a target reading level with intelligent paragraph detection.
 
-    Uses Claude if an API key is supplied; otherwise falls back to Ollama.
+    Automatically detects whether input contains multiple paragraphs (separated by
+    blank lines) and routes to the appropriate pipeline:
 
-    Pipeline:
+    **Single Paragraph Mode:**
       1. Detect original readability
       2. Extract keywords from original
       3. Iterative rewrite loop (max 3 passes, ±2.0 grade tolerance)
@@ -357,8 +359,17 @@ async def transform(request: TransformRequest):
       5. Check keyword preservation
       6. Generate differentiation metadata
       7. Generate teacher report
+      Returns: TransformResult (original_text, transformed_text, reliability fields)
 
-    Returns comprehensive metadata and analysis for teacher-friendly assessment.
+    **Multi-Paragraph Mode (NEW):**
+      1. Segment document into paragraphs (split on \\n\\n)
+      2. For each paragraph: run transform pipeline independently
+      3. Aggregate document-level metrics (average grades, semantic score, keywords)
+      4. Compute document reliability based on average semantic preservation
+      5. Generate document-level accessibility report
+      Returns: DocumentTransformResult (paragraphs[], document_metrics, teacher_report)
+
+    Uses Claude if an API key is supplied; otherwise falls back to Ollama.
     """
     text = request.text.strip()
     target = request.target_level.lower()
@@ -377,32 +388,119 @@ async def transform(request: TransformRequest):
             detail="No AI backend available. Start Ollama or provide a Claude API key.",
         )
 
-    # Run full pipeline with iterative grade correction
-    result = await _run_transform_pipeline(text, target, request.api_key)
+    # STEP 1: Detect paragraph count
+    try:
+        paragraphs = segment_paragraphs(text)
+    except ValueError:
+        # If segmentation fails (empty document), fall back to single-paragraph mode
+        paragraphs = [text]
 
-    return TransformResult(
-        original_text=result["original_text"],
-        transformed_text=result["transformed_text"],
-        original_level=result["original_level"],
-        target_level=result["target_level"],
-        original_grade=round(result["original_grade"], 2),
-        new_grade=round(result["new_grade"], 2),
-        semantic_score=(
-            round(result["semantic_score"], 4)
-            if result["semantic_score"] is not None
-            else None
-        ),
-        original_keywords=result["original_keywords"],
-        preserved_keywords=result["preserved_keywords"],
-        differentiation_metadata=result["differentiation_metadata"],
-        teacher_report=result["teacher_report"],
-        # Reliability assessment fields
-        semantic_status=result.get("semantic_status"),
-        terminology_status=result.get("terminology_status"),
-        grade_alignment_status=result.get("grade_alignment_status"),
-        reliability_status=result.get("reliability_status"),
-        reliability_warnings=result.get("reliability_warnings", []),
-    )
+    logger.info("Transform endpoint detected %d paragraph(s)", len(paragraphs))
+
+    # STEP 2: Route to appropriate pipeline based on paragraph count
+    if len(paragraphs) > 1:
+        # Multi-paragraph mode: delegate to document transformation logic
+        logger.info("Routing to multi-paragraph document transformation")
+
+        paragraph_results_list: list[dict] = []
+        paragraph_transforms_list: list[ParagraphTransformResult] = []
+
+        for idx, para in enumerate(paragraphs):
+            logger.info("Processing paragraph %d/%d", idx + 1, len(paragraphs))
+
+            try:
+                # Run the full transform pipeline on this paragraph
+                para_result = await _run_transform_pipeline(para, target, request.api_key)
+
+                # Extract metrics for aggregation
+                para_metrics = {
+                    "original_grade": para_result["original_grade"],
+                    "new_grade": para_result["new_grade"],
+                    "semantic_score": para_result["semantic_score"],
+                    "keywords_preserved_count": len(para_result["preserved_keywords"]),
+                }
+                paragraph_results_list.append(para_metrics)
+
+                # Create paragraph-level result
+                paragraph_transform = ParagraphTransformResult(
+                    original_paragraph=para_result["original_text"],
+                    transformed_paragraph=para_result["transformed_text"],
+                    original_grade=round(para_result["original_grade"], 2),
+                    new_grade=round(para_result["new_grade"], 2),
+                    semantic_score=(
+                        round(para_result["semantic_score"], 4)
+                        if para_result["semantic_score"] is not None
+                        else None
+                    ),
+                    keywords_preserved_count=len(para_result["preserved_keywords"]),
+                )
+                paragraph_transforms_list.append(paragraph_transform)
+
+            except Exception as e:
+                logger.error("Failed to transform paragraph %d: %s", idx + 1, str(e))
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to transform paragraph {idx + 1}: {str(e)}",
+                )
+
+        # Compute document-level metrics
+        document_metrics_dict = compute_document_metrics(paragraph_results_list)
+        document_metrics = DocumentMetrics(
+            average_original_grade=document_metrics_dict["average_original_grade"],
+            average_new_grade=document_metrics_dict["average_new_grade"],
+            average_semantic_score=document_metrics_dict["average_semantic_score"],
+            total_keywords_preserved=document_metrics_dict["total_keywords_preserved"],
+            document_reliability=document_metrics_dict["document_reliability"],
+            paragraphs_processed=document_metrics_dict["paragraphs_processed"],
+        )
+
+        # Generate document-level report
+        teacher_report = generate_document_report(document_metrics_dict, len(paragraphs))
+
+        logger.info(
+            "Document transformation complete: %d paragraphs, avg_grade %.2f → %.2f, reliability=%s",
+            len(paragraphs),
+            document_metrics.average_original_grade,
+            document_metrics.average_new_grade,
+            document_metrics.document_reliability,
+        )
+
+        # Return DocumentTransformResult
+        return DocumentTransformResult(
+            paragraphs=paragraph_transforms_list,
+            document_metrics=document_metrics,
+            teacher_report=teacher_report,
+        )
+
+    else:
+        # Single-paragraph mode: use existing pipeline (backward compatible)
+        logger.info("Routing to single-paragraph transformation (compatibility mode)")
+
+        result = await _run_transform_pipeline(text, target, request.api_key)
+
+        return TransformResult(
+            original_text=result["original_text"],
+            transformed_text=result["transformed_text"],
+            original_level=result["original_level"],
+            target_level=result["target_level"],
+            original_grade=round(result["original_grade"], 2),
+            new_grade=round(result["new_grade"], 2),
+            semantic_score=(
+                round(result["semantic_score"], 4)
+                if result["semantic_score"] is not None
+                else None
+            ),
+            original_keywords=result["original_keywords"],
+            preserved_keywords=result["preserved_keywords"],
+            differentiation_metadata=result["differentiation_metadata"],
+            teacher_report=result["teacher_report"],
+            # Reliability assessment fields
+            semantic_status=result.get("semantic_status"),
+            terminology_status=result.get("terminology_status"),
+            grade_alignment_status=result.get("grade_alignment_status"),
+            reliability_status=result.get("reliability_status"),
+            reliability_warnings=result.get("reliability_warnings", []),
+        )
 
 
 @router.post("/export-report", response_class=PlainTextResponse)
