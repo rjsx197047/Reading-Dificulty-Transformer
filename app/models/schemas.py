@@ -429,3 +429,95 @@ class UnifiedTransformResult(BaseModel):
         None,
         description="Document-level aggregate metrics (only present if input had multiple paragraphs)",
     )
+
+
+# ---------------------------------------------------------------------------
+# PDF Upload Response Schemas
+# ---------------------------------------------------------------------------
+
+
+class PDFUploadResponse(BaseModel):
+    """
+    Response from PDF upload and adaptation endpoint.
+
+    Contains extracted text from PDF, readability metrics, and adapted output
+    suitable for classroom use.
+    """
+
+    # PDF extraction metadata
+    extracted_text: str = Field(
+        ...,
+        description="Full text extracted from PDF",
+    )
+    pages_processed: int = Field(
+        ..., description="Number of pages in the PDF"
+    )
+    paragraphs_in_source: int = Field(
+        ..., description="Number of paragraphs detected in extracted text"
+    )
+    word_count_source: int = Field(
+        ..., description="Word count of extracted PDF text"
+    )
+
+    # Transformation results
+    transformed_text: str = Field(
+        ...,
+        description="Text adapted to target reading level",
+    )
+    original_grade: float = Field(
+        ..., description="Original text grade level"
+    )
+    new_grade: float = Field(
+        ..., description="Adapted text grade level"
+    )
+    semantic_score: float | None = Field(
+        None, description="Semantic preservation score (0-1)"
+    )
+
+    # Reliability & metrics
+    reliability_status: str | None = Field(
+        None,
+        description="Overall reliability: 'High', 'Moderate', or 'Review Recommended'",
+    )
+    reliability_warnings: list[str] = Field(
+        default_factory=list, description="Warnings if any metrics below thresholds"
+    )
+
+    # Document-level metrics
+    document_metrics: dict | None = Field(
+        None,
+        description="Aggregate metrics if PDF had multiple paragraphs",
+    )
+    paragraphs: list[dict] | None = Field(
+        None,
+        description="Per-paragraph transformation results",
+    )
+
+    # Teacher report
+    teacher_report: str | None = Field(
+        None,
+        description="Markdown-formatted accessibility report for teachers",
+    )
+
+    # Error handling
+    error: str | None = Field(
+        None,
+        description="Error message if extraction or processing failed",
+    )
+
+
+class PDFLessonAdaptationRequest(BaseModel):
+    """
+    Request to adapt a PDF lesson.
+
+    Note: file is handled by FastAPI's UploadFile, not included in this schema.
+    """
+
+    target_level: str = Field(
+        "middle_school",
+        description="Target reading level: elementary, middle_school, high_school, college",
+    )
+    api_key: str | None = Field(
+        None,
+        description="Optional Claude API key for AI-powered analysis",
+    )

@@ -3,7 +3,7 @@
 import logging
 from typing import Union
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import PlainTextResponse
 
 from app.core.config import settings
@@ -11,6 +11,7 @@ from app.core.differentiation_metadata import generate_differentiation_metadata
 from app.core.document_transformer import compute_document_metrics, segment_paragraphs
 from app.core.keyword_extractor import extract_keywords as extract_keywords_util
 from app.core.keyword_extractor import count_preserved_keywords
+from app.core.pdf_extractor import extract_text_from_pdf, validate_pdf_file
 from app.core.readability import detect_readability
 from app.core.reliability_assessment import assess_reliability
 from app.core.report_generator import generate_document_report, generate_teacher_report
@@ -24,6 +25,7 @@ from app.models.schemas import (
     ExportReportRequest,
     HealthResponse,
     ParagraphTransformResult,
+    PDFUploadResponse,
     ReadabilityDetectionResult,
     SimplifyRequest,
     SimplifyResult,
@@ -921,4 +923,160 @@ async def document_transform(request: DocumentTransformRequest):
         paragraphs=paragraph_transforms_list,
         document_metrics=document_metrics,
         teacher_report=teacher_report,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PDF LESSON ADAPTATION ENDPOINT
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/upload-pdf", response_model=PDFUploadResponse)
+async def upload_pdf(
+    file: UploadFile = File(...),
+    target_level: str = "middle_school",
+    api_key: str | None = None,
+):
+    """
+    Upload and adapt a PDF lesson excerpt to a target reading level.
+
+    Pipeline:
+      1. Validate PDF file
+      2. Extract text from PDF (page-by-page)
+      3. Send extracted text into multi-paragraph transform pipeline
+      4. Return adapted text + document metrics + teacher report
+
+    Args:
+        file: PDF file upload (multipart/form-data)
+        target_level: Target reading level (elementary, middle_school, high_school, college)
+        api_key: Optional Claude API key
+
+    Returns:
+        PDFUploadResponse with extracted text, adapted output, and metrics
+    """
+    # STEP 1: Validate file
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    if not validate_pdf_file(file.filename):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid file type. Expected PDF, got: {file.filename}",
+        )
+
+    # STEP 2: Read PDF bytes
+    try:
+        pdf_bytes = await file.read()
+    except Exception as e:
+        logger.error(f"Failed to read PDF file: {e}")
+        raise HTTPException(status_code=400, detail="Failed to read PDF file")
+
+    # STEP 3: Extract text from PDF
+    logger.info(f"Extracting text from PDF: {file.filename}")
+    extraction_result = extract_text_from_pdf(pdf_bytes)
+
+    if not extraction_result.success:
+        logger.warning(
+            f"PDF extraction failed: {extraction_result.error}"
+        )
+        return PDFUploadResponse(
+            extracted_text="",
+            pages_processed=0,
+            paragraphs_in_source=0,
+            word_count_source=0,
+            transformed_text="",
+            original_grade=0.0,
+            new_grade=0.0,
+            error=extraction_result.error or "Unknown PDF extraction error",
+        )
+
+    extracted_text = extraction_result.text
+    logger.info(
+        f"PDF extraction successful: {extraction_result.page_count} pages, "
+        f"{extraction_result.paragraph_count} paragraphs, "
+        f"{extraction_result.word_count} words"
+    )
+
+    # STEP 4: Validate target level
+    valid_levels = ["elementary", "middle_school", "high_school", "college"]
+    if target_level.lower() not in valid_levels:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid target_level. Must be one of: {', '.join(valid_levels)}",
+        )
+
+    # STEP 5: Check backend availability
+    use_claude = _should_use_claude(api_key)
+    if not use_claude and not await is_ollama_available():
+        raise HTTPException(
+            status_code=503,
+            detail="No AI backend available. Start Ollama or provide a Claude API key.",
+        )
+
+    # STEP 6: Run transformation pipeline
+    try:
+        logger.info(
+            f"Running transform pipeline on extracted text: "
+            f"target={target_level}, use_claude={use_claude}"
+        )
+        
+        # Reuse existing transform pipeline
+        result = await _run_transform_pipeline(
+            extracted_text, target_level.lower(), api_key
+        )
+
+        logger.info(
+            f"Transform pipeline complete: grade {result['original_grade']:.2f} → "
+            f"{result['new_grade']:.2f}, semantic={result['semantic_score']}"
+        )
+
+    except HTTPException as e:
+        # Re-raise HTTP exceptions
+        raise e
+    except Exception as e:
+        logger.error(f"Transform pipeline failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Text transformation failed: {str(e)}"
+        )
+
+    # STEP 7: Build teacher report with PDF metadata
+    teacher_report = result.get("teacher_report", "")
+    
+    # Add PDF source section
+    pdf_source_section = f"""
+## Source Document
+
+**PDF File:** {file.filename}
+
+**Pages Processed:** {extraction_result.page_count}
+
+**Paragraphs Detected:** {extraction_result.paragraph_count}
+
+**Word Count (Original):** {extraction_result.word_count}
+
+---
+"""
+    
+    teacher_report_with_source = pdf_source_section + teacher_report
+
+    # STEP 8: Return unified response
+    return PDFUploadResponse(
+        extracted_text=extracted_text,
+        pages_processed=extraction_result.page_count,
+        paragraphs_in_source=extraction_result.paragraph_count,
+        word_count_source=extraction_result.word_count,
+        transformed_text=result["transformed_text"],
+        original_grade=round(result["original_grade"], 2),
+        new_grade=round(result["new_grade"], 2),
+        semantic_score=(
+            round(result["semantic_score"], 4)
+            if result["semantic_score"] is not None
+            else None
+        ),
+        reliability_status=result.get("reliability_status"),
+        reliability_warnings=result.get("reliability_warnings", []),
+        document_metrics=None,  # Will be set if multi-paragraph
+        paragraphs=None,  # Will be set if multi-paragraph
+        teacher_report=teacher_report_with_source,
+        error=None,
     )

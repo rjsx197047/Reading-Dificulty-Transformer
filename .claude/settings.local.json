@@ -55,7 +55,18 @@
       "Bash(curl -s -X POST http://127.0.0.1:8000/api/document-transform -H 'Content-Type: application/json' -d '{ *)",
       "Bash(bash /tmp/demo_smart_transform.sh)",
       "Bash(grep -v \"^$\")",
-      "Bash(find /Users/rohailsiddiqi/Documents/Reading -name \"*.pyc\" -delete)"
+      "Bash(find /Users/rohailsiddiqi/Documents/Reading -name \"*.pyc\" -delete)",
+      "Bash(python3)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/upload-pdf -F file=@/tmp/test_lesson.pdf -F target_level=elementary)",
+      "Bash(curl -s http://127.0.0.1:8000/api/health)",
+      "Bash(python -m py_compile /Users/rohailsiddiqi/Documents/Reading/app/api/routes.py)",
+      "Bash(python -m py_compile /Users/rohailsiddiqi/Documents/Reading/app/models/schemas.py)",
+      "Bash(python3 -c \"from app.core.pdf_extractor import extract_text_from_pdf; print\\('✓ PDF extractor imported successfully'\\)\")",
+      "Bash(tee /tmp/server_debug.log)",
+      "Bash(pkill -9 -f uvicorn)",
+      "Bash(awk '{print $2}')",
+      "Bash(python -m uvicorn app.main:app --host 127.0.0.1 --port 8000)",
+      "Bash(git checkout *)"
     ]
   }
 }
