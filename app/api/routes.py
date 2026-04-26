@@ -135,24 +135,28 @@ async def _run_transform_pipeline(
     # Step 3: Iterative transformation loop with grade correction
     transformed = None
     new_grade = None
-    current_target_level = target
+    grade_alignment_delta = None
+    current_aggressiveness = 1  # Start with normal aggressiveness; increment on retry
 
     for attempt in range(_TRANSFORM_MAX_PASSES):
         logger.info(
-            "Transform pass %d/%d: target=%s, target_grade=%.1f",
+            "Transform attempt %d/%d: target=%s (grade %.1f), aggressiveness=%d",
             attempt + 1,
             _TRANSFORM_MAX_PASSES,
-            current_target_level,
+            target,
             target_grade_numeric,
+            current_aggressiveness,
         )
 
-        # Transform text via LLM
+        # Transform text via LLM with current aggressiveness level
         if use_claude:
-            candidate = await transform_text_claude(text, current_target_level, api_key)
+            candidate = await transform_text_claude(
+                text, target, api_key, aggressiveness=current_aggressiveness
+            )
             if not candidate:
                 raise HTTPException(status_code=500, detail="Claude API call failed.")
         else:
-            candidate = await transform_text(text, current_target_level)
+            candidate = await transform_text(text, target, aggressiveness=current_aggressiveness)
             if not candidate:
                 raise HTTPException(
                     status_code=500, detail="Failed to transform text via Ollama."
@@ -161,47 +165,39 @@ async def _run_transform_pipeline(
         # Detect new readability
         candidate_scores = compute_readability_scores(candidate)
         candidate_grade = candidate_scores.flesch_kincaid_grade
+        grade_alignment_delta = abs(candidate_grade - target_grade_numeric)
 
         logger.info(
-            "Pass %d result: achieved grade %.2f (target %.1f, diff %.2f)",
+            "Attempt %d result: achieved grade %.2f (target %.1f, delta %.2f)",
             attempt + 1,
             candidate_grade,
             target_grade_numeric,
-            abs(candidate_grade - target_grade_numeric),
+            grade_alignment_delta,
         )
 
         # Accept this result
         transformed = candidate
         new_grade = candidate_grade
 
-        # Check tolerance — stop if close enough
-        if abs(candidate_grade - target_grade_numeric) <= _TRANSFORM_GRADE_TOLERANCE:
-            logger.info("Pass %d within tolerance — stopping", attempt + 1)
+        # Check tolerance — stop if close enough (within 1 grade level)
+        if grade_alignment_delta <= 1.0:
+            logger.info(
+                "Attempt %d: grade alignment delta %.2f ≤ 1.0, accepting result",
+                attempt + 1,
+                grade_alignment_delta,
+            )
             break
 
-        # Adjust for next pass: if text is too complex, push simpler; if too simple, push harder
-        if candidate_grade > target_grade_numeric + _TRANSFORM_GRADE_TOLERANCE:
-            # Text is too hard — simplify more aggressively by targeting one level lower
-            if target == "elementary":
-                current_target_level = "elementary"  # Already lowest
-            elif target == "middle_school":
-                current_target_level = "elementary"
-            elif target == "high_school":
-                current_target_level = "middle_school"
-            elif target == "college":
-                current_target_level = "high_school"
-            logger.info("Grade too high, dropping target to %s for next pass", current_target_level)
-        elif candidate_grade < target_grade_numeric - _TRANSFORM_GRADE_TOLERANCE:
-            # Text is too easy — push harder
-            if target == "elementary":
-                current_target_level = "middle_school"
-            elif target == "middle_school":
-                current_target_level = "high_school"
-            elif target == "high_school":
-                current_target_level = "college"
-            else:
-                current_target_level = "college"  # Already highest
-            logger.info("Grade too low, raising target to %s for next pass", current_target_level)
+        # Prepare for next retry (if not final attempt)
+        if attempt < _TRANSFORM_MAX_PASSES - 1:
+            # Increment aggressiveness for next attempt (up to 3)
+            if current_aggressiveness < 3:
+                current_aggressiveness += 1
+                logger.info(
+                    "Grade alignment delta %.2f > 1.0, increasing aggressiveness to %d for next attempt",
+                    grade_alignment_delta,
+                    current_aggressiveness,
+                )
 
     if transformed is None:
         raise HTTPException(status_code=500, detail="Transform pipeline failed to produce output.")
@@ -237,7 +233,18 @@ async def _run_transform_pipeline(
         keywords_preserved=preserved_keywords,
     )
 
-    # Step 8: Generate teacher report (now includes reliability assessment)
+    # Step 8: Determine grade_alignment_status based on delta
+    if grade_alignment_delta is not None:
+        if grade_alignment_delta <= 1.0:
+            grade_alignment_status = "Target level achieved"
+        elif grade_alignment_delta <= 3.0:
+            grade_alignment_status = "Close to target"
+        else:
+            grade_alignment_status = "Target level not achieved"
+    else:
+        grade_alignment_status = "Unknown"
+
+    # Step 9: Generate teacher report (now includes reliability assessment)
     teacher_report, reliability_assessment = generate_teacher_report(
         metadata=differentiation_metadata,
         original_keywords=original_keywords,
@@ -245,7 +252,17 @@ async def _run_transform_pipeline(
         target_grade=target_grade_numeric,
     )
 
-    # Step 9: Compute additional reliability scores if needed
+    # Step 10: Build reliability warnings list
+    reliability_warnings = reliability_assessment.get("warnings", [])
+
+    # Add warning if grade alignment is poor
+    if grade_alignment_delta is not None and grade_alignment_delta > 1.0:
+        reliability_warnings.append(
+            f"Grade alignment delta {grade_alignment_delta:.1f} exceeds tolerance. "
+            f"Target: {target_grade_numeric:.1f}, Achieved: {new_grade:.1f}"
+        )
+
+    # Step 11: Compute additional reliability scores if needed
     # (generate_teacher_report computes them, but we also return them separately)
     if semantic_score_was_computed is False:
         reliability_assessment = assess_reliability(
@@ -271,9 +288,9 @@ async def _run_transform_pipeline(
         # Reliability assessment fields
         "semantic_status": reliability_assessment.get("semantic_status"),
         "terminology_status": reliability_assessment.get("terminology_status"),
-        "grade_alignment_status": reliability_assessment.get("grade_alignment_status"),
+        "grade_alignment_status": grade_alignment_status,
         "reliability_status": reliability_assessment.get("reliability_status"),
-        "reliability_warnings": reliability_assessment.get("warnings", []),
+        "reliability_warnings": reliability_warnings,
     }
 
 
@@ -482,19 +499,35 @@ async def transform(request: TransformRequest):
         )
 
         # BACKWARD COMPATIBILITY: Join transformed paragraphs with \n\n
-        joined_transformed_text = "\n\n".join(
-            p.transformed_paragraph for p in paragraph_transforms_list
-        )
+        # Validate each paragraph has valid string content
+        valid_paragraphs = []
+        for p in paragraph_transforms_list:
+            if isinstance(p.transformed_paragraph, str) and p.transformed_paragraph.strip():
+                valid_paragraphs.append(p.transformed_paragraph)
+            else:
+                logger.warning("Invalid transformed paragraph detected, using fallback")
+                valid_paragraphs.append("Unable to process this paragraph. Please try again.")
+
+        joined_transformed_text = "\n\n".join(valid_paragraphs)
+
+        # Validate final joined text
+        if not joined_transformed_text.strip():
+            logger.error("Multi-paragraph transform produced empty result")
+            joined_transformed_text = "Unable to process transformation. Please try again."
 
         # DEBUG: Log what we're returning
-        logger.info(f"Multi-para: first_original_level={first_original_level}, type={type(first_original_level)}")
+        logger.info(
+            f"Multi-para: first_original_level={first_original_level}, "
+            f"paragraphs={len(paragraph_transforms_list)}, "
+            f"text_len={len(joined_transformed_text)}"
+        )
 
         # Return UnifiedTransformResult with BOTH formats
         return UnifiedTransformResult(
             # Backward compatibility fields (always present)
             original_text=text,
             transformed_text=joined_transformed_text,
-            original_level="High School",  # Temporarily hardcode
+            original_level=first_original_level or "Unknown",
             target_level=target,
             original_grade=document_metrics.average_original_grade,
             new_grade=document_metrics.average_new_grade,
@@ -517,13 +550,54 @@ async def transform(request: TransformRequest):
         # Single-paragraph mode: use existing pipeline (backward compatible)
         logger.info("Routing to single-paragraph transformation (compatibility mode)")
 
-        result = await _run_transform_pipeline(text, target, request.api_key)
+        try:
+            result = await _run_transform_pipeline(text, target, request.api_key)
+        except Exception as e:
+            logger.error(f"Transform pipeline failed: {e}")
+            # Return error response with fallback string
+            fallback_msg = "Unable to process transformation. Please try again."
+            return UnifiedTransformResult(
+                original_text=text,
+                transformed_text=fallback_msg,
+                original_level="Unknown",
+                target_level=target,
+                original_grade=0.0,
+                new_grade=0.0,
+                semantic_score=None,
+                original_keywords=[],
+                preserved_keywords=[],
+                teacher_report="Transformation failed. Please check your input and try again.",
+                semantic_status="Unavailable",
+                terminology_status="Unavailable",
+                grade_alignment_status="Unknown",
+                reliability_status="Review Recommended",
+                reliability_warnings=["Transform pipeline error: " + str(e)],
+                differentiation_metadata=None,
+                paragraphs=[
+                    ParagraphTransformResult(
+                        original_paragraph=text,
+                        transformed_paragraph=fallback_msg,
+                        original_grade=0.0,
+                        new_grade=0.0,
+                        semantic_score=None,
+                        keywords_preserved_count=0,
+                    )
+                ],
+                document_metrics=None,
+            )
+
+        # Verify transformed_text is a valid string
+        transformed_text = result.get("transformed_text", "")
+        if not isinstance(transformed_text, str) or not transformed_text.strip():
+            logger.warning("Transform returned invalid transformed_text, using fallback")
+            transformed_text = "Unable to process transformation. Please try again."
+            result["reliability_warnings"].append("Transformed text validation failed")
 
         # Return UnifiedTransformResult with BOTH formats for consistency
         return UnifiedTransformResult(
             # Backward compatibility fields (always present)
             original_text=result["original_text"],
-            transformed_text=result["transformed_text"],
+            transformed_text=transformed_text,
             original_level=result["original_level"],
             target_level=result["target_level"],
             original_grade=round(result["original_grade"], 2),
@@ -546,7 +620,7 @@ async def transform(request: TransformRequest):
             paragraphs=[
                 ParagraphTransformResult(
                     original_paragraph=result["original_text"],
-                    transformed_paragraph=result["transformed_text"],
+                    transformed_paragraph=transformed_text,
                     original_grade=round(result["original_grade"], 2),
                     new_grade=round(result["new_grade"], 2),
                     semantic_score=(
@@ -1019,7 +1093,7 @@ async def upload_pdf(
             f"Running transform pipeline on extracted text: "
             f"target={target_level}, use_claude={use_claude}"
         )
-        
+
         # Reuse existing transform pipeline
         result = await _run_transform_pipeline(
             extracted_text, target_level.lower(), api_key
@@ -1039,9 +1113,18 @@ async def upload_pdf(
             status_code=500, detail=f"Text transformation failed: {str(e)}"
         )
 
-    # STEP 7: Build teacher report with PDF metadata
+    # STEP 7: Validate transformed_text is a valid string
+    transformed_text = result.get("transformed_text", "")
+    if not isinstance(transformed_text, str) or not transformed_text.strip():
+        logger.warning("PDF transform returned invalid transformed_text, using fallback")
+        transformed_text = "Unable to process transformation. Please try again."
+        if "reliability_warnings" not in result:
+            result["reliability_warnings"] = []
+        result["reliability_warnings"].append("Transformed text validation failed")
+
+    # STEP 8: Build teacher report with PDF metadata
     teacher_report = result.get("teacher_report", "")
-    
+
     # Add PDF source section
     pdf_source_section = f"""
 ## Source Document
@@ -1056,16 +1139,16 @@ async def upload_pdf(
 
 ---
 """
-    
+
     teacher_report_with_source = pdf_source_section + teacher_report
 
-    # STEP 8: Return unified response
+    # STEP 9: Return unified response
     return PDFUploadResponse(
         extracted_text=extracted_text,
         pages_processed=extraction_result.page_count,
         paragraphs_in_source=extraction_result.paragraph_count,
         word_count_source=extraction_result.word_count,
-        transformed_text=result["transformed_text"],
+        transformed_text=transformed_text,
         original_grade=round(result["original_grade"], 2),
         new_grade=round(result["new_grade"], 2),
         semantic_score=(

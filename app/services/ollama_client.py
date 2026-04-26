@@ -45,9 +45,15 @@ level it is, and what specific features contribute to its complexity or simplici
     return await _query_ollama(prompt)
 
 
-async def transform_text(text: str, target_level: str) -> str | None:
+async def transform_text(text: str, target_level: str, aggressiveness: int = 1) -> str | None:
     """
     Ask Ollama to rewrite the text at the specified target reading level.
+
+    Args:
+        text: Text to rewrite
+        target_level: elementary, middle_school, high_school, or college
+        aggressiveness: 1 (normal), 2 (more aggressive), 3 (very aggressive)
+
     Returns None if Ollama is unavailable.
     """
     level_descriptions = {
@@ -59,11 +65,20 @@ async def transform_text(text: str, target_level: str) -> str | None:
 
     audience = level_descriptions.get(target_level, level_descriptions["high_school"])
 
+    # Add aggressiveness instructions
+    aggressiveness_instructions = {
+        1: "Adjust vocabulary, sentence length, and complexity to match the target level.",
+        2: "Simplify significantly. Use very short sentences and replace complex terms with simple ones.",
+        3: "Simplify VERY aggressively. Use only simple words and very short sentences. Avoid any complex phrasing.",
+    }
+
+    aggressiveness_instr = aggressiveness_instructions.get(aggressiveness, aggressiveness_instructions[1])
+
     prompt = f"""Rewrite the following text so it is appropriate for {audience}
 
 Important rules:
 1. Preserve ALL factual information and key ideas — do not omit anything.
-2. Adjust vocabulary, sentence length, and complexity to match the target level.
+2. {aggressiveness_instr}
 3. Output ONLY the rewritten text — no explanations, headers, or notes.
 
 Original text:

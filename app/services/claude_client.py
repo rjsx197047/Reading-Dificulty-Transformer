@@ -149,8 +149,16 @@ Label:"""
     return None
 
 
-async def transform_text_claude(text: str, target_level: str, api_key: str) -> str | None:
-    """Claude-powered transform to a named reading level."""
+async def transform_text_claude(text: str, target_level: str, api_key: str, aggressiveness: int = 1) -> str | None:
+    """
+    Claude-powered transform to a named reading level.
+
+    Args:
+        text: Text to rewrite
+        target_level: elementary, middle_school, high_school, or college
+        api_key: Anthropic API key
+        aggressiveness: 1 (normal), 2 (more aggressive), 3 (very aggressive)
+    """
     level_descriptions = {
         "elementary": "a 3rd–5th grader (ages 8–11). Use short sentences, common words, simple ideas.",
         "middle_school": "a 6th–8th grader (ages 11–14). Use clear language and moderate sentence length.",
@@ -159,12 +167,20 @@ async def transform_text_claude(text: str, target_level: str, api_key: str) -> s
     }
     audience = level_descriptions.get(target_level, level_descriptions["high_school"])
 
+    # Add aggressiveness instructions
+    aggressiveness_instructions = {
+        1: "Adjust vocabulary, sentence length, and complexity to match the target level.",
+        2: "Simplify significantly. Use very short sentences and replace complex terms with simple ones.",
+        3: "Simplify VERY aggressively. Use only simple words and very short sentences. Avoid any complex phrasing.",
+    }
+    aggressiveness_instr = aggressiveness_instructions.get(aggressiveness, aggressiveness_instructions[1])
+
     system = "You rewrite text to a target reading level without losing factual content."
     prompt = f"""Rewrite the following text so it is appropriate for {audience}
 
 Rules:
 1. Preserve ALL factual information and key ideas — do not omit anything.
-2. Adjust vocabulary, sentence length, and complexity to match the target level.
+2. {aggressiveness_instr}
 3. Output ONLY the rewritten text — no explanations, headers, or notes.
 
 Original text:
